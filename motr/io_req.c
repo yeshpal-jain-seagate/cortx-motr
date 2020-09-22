@@ -591,6 +591,7 @@ static void ioreq_iosm_handle_executed(struct m0_sm_group *grp,
 		}
 		if (ioreq_sm_state(ioo) == IRS_READ_COMPLETE) {
 			/* Finalizes the old read fops. */
+			M0_LOG(M0_ALWAYS, "Read-Modify-Write path : both");
 			if (ioo->ioo_rmw_read_pages > 0) {
 				ioo->ioo_nwxfer.nxr_ops->nxo_complete(
 					&ioo->ioo_nwxfer, rmw);
