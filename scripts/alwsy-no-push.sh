@@ -6,7 +6,7 @@ git checkout no-push-hook # pre-push
 git config core.hooksPath .githooks
 chmod +x .githooks/pre-push
 
-for i in `git branch`
+for i in `git branch | grep -v no-push-hook`
 do
     echo $i
     git checkout "$i"
