@@ -1,0 +1,14 @@
+nobase_motr_include_HEADERS += \
+                               dtms0/dtms0.h \
+							   dtms0/client.h
+
+motr_libmotr_la_SOURCES  +=  \
+                            dtms0/dtms0.c \
+							dtms0/client.c \
+							dtms0/service.c
+
+nodist_motr_libmotr_la_SOURCES  += \
+                            dtms0/dtms0_xc.c
+
+XC_FILES   += \
+			  dtms0/dtms0_xc.h
