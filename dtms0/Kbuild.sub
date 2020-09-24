@@ -1,0 +1,5 @@
+m0tr_objects += \
+                dtms0/dtms0.o       \
+                dtms0/client.o      \
+                dtms0/dtms0_xc.o
+

@@ -113,6 +113,9 @@ M0_INTERNAL void m0_addb2_service_module_fini(void);
 M0_INTERNAL int  m0_cas_module_init(void);
 M0_INTERNAL void m0_cas_module_fini(void);
 
+M0_INTERNAL int  m0_dtms0_module_init(void);
+M0_INTERNAL void m0_dtms0_module_fini(void);
+
 M0_INTERNAL int  m0_dix_cm_module_init(void);
 M0_INTERNAL void m0_dix_cm_module_fini(void);
 
@@ -228,6 +231,7 @@ struct init_fini_call subsystem[] = {
 	{ &m0_cas_module_init,  &m0_cas_module_fini,  "cas" },
 	{ &m0_parity_init,      &m0_parity_fini,      "parity_math" },
 	{ &m0_dtm_global_init,  &m0_dtm_global_fini,  "dtm" },
+	{ &m0_dtms0_module_init,  &m0_dtms0_module_fini,  "dtms0" },
 	{ &m0_ha_mod_init,      &m0_ha_mod_fini,      "ha" },
 	{ &m0_client_global_init, &m0_client_global_fini, "client" },
 	{ &m0_rconfc_mod_init,  &m0_rconfc_mod_fini,  "rconfc" },
