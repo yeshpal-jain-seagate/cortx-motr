@@ -346,10 +346,10 @@ M0_INTERNAL int m0_reqh_addb2_init(struct m0_reqh *reqh, const char *location,
 	int                  result;
 
 	/**
-	 * @todo replace size constant (10GB)  with a value from confc.
+	 * @todo replace size constant (1GB)  with a value from confc.
 	 */
 	result = m0_addb2_sys_stor_start(sys, location, key, mkfs, force,
-					 10ULL << 30);
+					 1ULL << 30);
 	if (result == 0) {
 		result = m0_addb2_sys_net_start(sys);
 		if (result == 0) {
