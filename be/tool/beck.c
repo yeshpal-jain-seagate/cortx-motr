@@ -69,6 +69,7 @@
 #include "ioservice/fid_convert.h" /* m0_fid_convert_cob2adstob */
 #include "ioservice/cob_foms.h"    /* m0_cc_stob_cr_credit */
 #include "be/extmap_internal.h"    /* m0_be_emap */
+#include "be/tx_bulk.h"   /* m0_be_tx_bulk */
 
 M0_TL_DESCR_DECLARE(ad_domains, M0_EXTERN);
 M0_TL_DECLARE(ad_domains, M0_EXTERN, struct ad_domain_map);
@@ -243,6 +244,10 @@ struct builder {
 	 * construct dix layout.
 	 */
 	struct m0_fid              b_pver_fid;
+	struct m0_mutex            b_lock;
+	/* struct m0_mutex            b_emaplock[30];
+	 * struct m0_mutex            b_coblock;
+	 * struct m0_mutex            b_ctglock; */
 };
 
 struct emap_action {
@@ -282,7 +287,7 @@ static int  builder_init   (struct builder *b);
 static void builder_fini   (struct builder *b);
 static void ad_dom_fini    (struct builder *b);
 static void builder_thread (struct builder *b);
-static void builder_process(struct builder *b);
+/* static void builder_process(struct builder *b); */
 
 static int format_header_verify(const struct m0_format_header *h,
 				uint16_t rtype);
@@ -1051,9 +1056,10 @@ static int bnode_check(struct scanner *s, struct rectype *r, char *buf)
 }
 
 static struct m0_stob_ad_domain *emap_dom_find(const struct action *act,
-					       const struct m0_fid *emap_fid)
+					       const struct m0_fid *emap_fid,
+					       int  *lockid)
 {
-	struct m0_stob_ad_domain *adom;
+	struct m0_stob_ad_domain *adom = NULL;
 	int			  i;
 
 	for (i = 0; i < act->a_builder->b_ad_dom_count; i++) {
@@ -1063,6 +1069,7 @@ static struct m0_stob_ad_domain *emap_dom_find(const struct action *act,
 			break;
 		}
 	}
+	*lockid = i;
 	return (i == act->a_builder->b_ad_dom_count) ? NULL: adom;
 }
 
@@ -1123,9 +1130,11 @@ static int emap_prep(struct action *act, struct m0_be_tx_credit *credit)
 	struct m0_be_emap_key    *emap_key;
 	int 			  rc;
 	struct m0_be_emap_cursor  it = {};
-
-	adom = emap_dom_find(act, &emap_ac->emap_fid);
+	int lid;
+	adom = emap_dom_find(act, &emap_ac->emap_fid, &lid);
+	/* m0_mutex_lock(&b.b_emaplock[lid]); */
 	if (adom == NULL) {
+		/* m0_mutex_unlock(&b.b_emaplock[lid]); */
 		M0_LOG(M0_ERROR, "Invalid FID for emap record found !!!");
 		m0_free(act);
 		return M0_RC(-EINVAL);
@@ -1145,6 +1154,7 @@ static int emap_prep(struct action *act, struct m0_be_tx_credit *credit)
 		m0_be_emap_credit(&adom->sad_adata, M0_BEO_PASTE,
 				  BALLOC_FRAGS_MAX + 1, credit);
 	}
+	/* m0_mutex_unlock(&b.b_emaplock[lid]); */
 	return 0;
 }
 
@@ -1158,8 +1168,10 @@ static void emap_act(struct action *act, struct m0_be_tx *tx)
 	struct m0_be_emap_rec    *emap_val;
 	struct m0_be_emap_cursor  it = {};
 	struct m0_ext             in_ext;
+	int lid;
 
-	adom = emap_dom_find(act, &emap_ac->emap_fid);
+	adom = emap_dom_find(act, &emap_ac->emap_fid, &lid);
+	/* m0_mutex_lock(&b.b_emaplock[lid]); */
 	emap_val = emap_ac->emap_val.b_addr;
 	if (emap_val->er_value != AET_HOLE) {
 		emap_key = emap_ac->emap_key.b_addr;
@@ -1173,7 +1185,8 @@ static void emap_act(struct action *act, struct m0_be_tx *tx)
 					  tx, &ext,
 					  M0_BALLOC_NORMAL_ZONE);
 		if (rc != 0) {
-			M0_LOG(M0_ERROR, "Failed to reserve extent rc=%d", rc);
+			/* m0_mutex_unlock(&b.b_emaplock[lid]); */
+			M0_LOG(M0_ERROR, "Failed to reseve extent rc=%d", rc);
 			return;
 		}
 
@@ -1223,6 +1236,7 @@ static void emap_act(struct action *act, struct m0_be_tx *tx)
 		}
 	}
 
+	/* m0_mutex_unlock(&b.b_emaplock[lid]); */
 	if (rc != 0)
 		M0_LOG(M0_ERROR, "Failed to insert emap record rc=%d", rc);
 }
@@ -1312,7 +1326,7 @@ static void genadd(uint64_t gen)
 		}
 	}
 }
-
+#if 0
 static void builder_process(struct builder *b)
 {
 	struct action      *act;
@@ -1336,13 +1350,93 @@ static void builder_process(struct builder *b)
 	b->b_cred = M0_BE_TX_CREDIT(0, 0);
 	b->b_tx++;
 }
+#endif
+static void builder_next(struct m0_be_tx_bulk  *tb,
+			 struct m0_be_op       *op,
+			 void                  *datum,
+			 void                 **user)
+{
+	struct action  *act;
+	struct builder *b = datum;
+	m0_be_op_active(op);
+	
+	act = qget(b->b_q);
+	if (act != NULL) {
+		*user = act;
+		m0_be_op_rc_set(op, 0);
+	} else
+		m0_be_op_rc_set(op, -ENOENT);
+	m0_be_op_done(op);
+}
+
+static void builder_credit(struct m0_be_tx_bulk   *tb,
+			   struct m0_be_tx_credit *accum,
+			   m0_bcount_t            *accum_payload,
+			   void                   *datum,
+			   void                   *user)
+{
+	struct action  *act;
+	struct builder *b = datum;
+
+	act = user;
+	act->a_builder = b;
+	m0_mutex_lock(&b->b_lock);
+	act->a_ops->o_prep(act, accum);
+	m0_mutex_unlock(&b->b_lock);
+	b->b_act++;
+}
+
+static void builder_do(struct m0_be_tx_bulk   *tb,
+		       struct m0_be_tx        *tx,
+		       struct m0_be_op        *op,
+		       void                   *datum,
+		       void                   *user)
+{
+	struct action  *act;
+	struct builder *b = datum;
+	m0_be_op_active(op);
+
+	act = user;
+
+	if (act != NULL) {
+		m0_mutex_lock(&b->b_lock);
+		act->a_ops->o_act(act, tx);
+		m0_mutex_unlock(&b->b_lock);
+		act->a_ops->o_fini(act);
+		m0_free(act);
+	}
+	b->b_tx++;
+	m0_be_op_done(op);
+}
 
 static void builder_thread(struct builder *b)
 {
-	struct m0_be_tx_credit delta = {};
-	struct action         *act;
-	int		       ret;
+	/* struct m0_be_tx_credit delta = {};
+	 * struct action         *act;
+	 * int		       ret; */
+	struct m0_be_tx_bulk_cfg        tb_cfg;
+	struct m0_be_tx_bulk            tb;
+	int                             rc;
 
+
+
+	tb_cfg = (struct m0_be_tx_bulk_cfg){
+			.tbc_dom    =  b->b_dom, //b->b_seg->bs_domain, //TODO: Need to check
+			.tbc_datum  = b,
+			.tbc_next   = &builder_next,
+			.tbc_credit = &builder_credit,
+			.tbc_do     = &builder_do,
+	};
+
+	rc = m0_be_tx_bulk_init(&tb, &tb_cfg);
+	if (rc == 0) {
+		M0_BE_OP_SYNC(op, m0_be_tx_bulk_run(&tb, &op));
+		rc = m0_be_tx_bulk_status(&tb);
+		m0_be_tx_bulk_fini(&tb);
+	}
+
+
+#if 0
 	do {
 		delta = M0_BE_TX_CREDIT(0, 0);
 		act = qget(b->b_q);
@@ -1362,6 +1456,7 @@ static void builder_thread(struct builder *b)
 			b->b_act++;
 		}
 	} while (act->a_opc != AO_DONE);
+#endif
 	M0_ASSERT(b->b_qq.q_nr == 0);
 
 	/* Below clean up used as m0_be_ut_backend_fini()  fails because of
@@ -1836,7 +1931,7 @@ static struct cache_slot *ctg_getslot_insertcred(struct ctg_action *ca,
 	struct cache_slot *slot;
 
 	slot = cache_lookup(&b->b_cache, cas_ctg_fid);
-	if (slot == NULL) {
+	if (1 || slot == NULL) {
 		slot = cache_insert(&b->b_cache, cas_ctg_fid);
 		m0_ctg_create_credit(accum);
 		ca->cta_cid.ci_fid = ca->cta_fid;
@@ -1851,20 +1946,22 @@ static struct cache_slot *ctg_getslot_insertcred(struct ctg_action *ca,
 	return slot;
 }
 
-static int ctg_prep(struct action *act, struct m0_be_tx_credit *cred)
+static int ctg_prep(struct action *act, struct m0_be_tx_credit *accum)
 {
 	struct ctg_action      *ca    = M0_AMB(ca, act, cta_act);
 	struct m0_be_btree      tree  = {};
-	struct m0_be_tx_credit  accum = {};
+	/* struct m0_be_tx_credit  accum = {}; */
 
+	/* m0_mutex_lock(&b.b_ctglock); */
 	ca->cta_slot = ctg_getslot_insertcred(ca, act->a_builder,
-					      &ca->cta_fid, &accum);
-	if (!ca->cta_ismeta)
+					      &ca->cta_fid, accum);
+	/* if (!ca->cta_ismeta) */
 		m0_be_btree_insert_credit(&tree, 1,
 					  ca->cta_key.b_nob,
 					  ca->cta_val.b_nob,
-					  &accum);
-	*cred = accum;
+					  accum);
+	/* m0_mutex_unlock(&b.b_ctglock); */
+	/* *cred = accum; */
 	return 0;
 }
 
@@ -1898,6 +1995,7 @@ static void ctg_act(struct action *act, struct m0_be_tx *tx)
 	struct m0_cas_ctg *cc;
 	int                rc;
 
+	/* m0_mutex_lock(&b.b_ctglock); */
 	if (ca->cta_slot->cs_tree == NULL) {
 		rc = m0_ctg_meta_find_ctg(m0_ctg_meta(),
 					  &M0_FID_TINIT('T',
@@ -1908,6 +2006,7 @@ static void ctg_act(struct action *act, struct m0_be_tx *tx)
 			cc = ctg_create_meta(ca, tx);
 		} else if (rc != 0) {
 			M0_LOG(M0_DEBUG, "Btree not found rc=%d", rc);
+			/* m0_mutex_unlock(&b.b_ctglock); */
 			return;
 		}
 		if (cc != NULL) {
@@ -1929,6 +2028,7 @@ static void ctg_act(struct action *act, struct m0_be_tx *tx)
 		} else
 			M0_LOG(M0_DEBUG, "Failed to insert record rc=%d", rc);
 	}
+	/* m0_mutex_unlock(&b.b_ctglock); */
 }
 
 static void ctg_fini(struct action *act)
@@ -2154,9 +2254,10 @@ static int cob_proc(struct scanner *s, struct btype *b,
  * @param[in]  act  builder action.
  * @param[out] cred credits allocated for addition and deletion operation.
  */
-static int cob_prep(struct action *act, struct m0_be_tx_credit *cred)
+static int cob_prep(struct action *act, struct m0_be_tx_credit *accum)
 {
-	struct m0_be_tx_credit  accum = {};
+	/* struct m0_be_tx_credit  *accum = cred; */
+	/* m0_mutex_lock(&b.b_coblock); */
 	struct cob_action      *ca = container_of(act, struct cob_action,
 						  coa_act);
 	struct m0_cob_nsrec    *nsrec = ca->coa_val.b_addr;
@@ -2164,13 +2265,14 @@ static int cob_prep(struct action *act, struct m0_be_tx_credit *cred)
 
  	if (m0_fid_validate_cob(&nsrec->cnr_fid)) {
 		m0_fid_convert_cob2adstob(&nsrec->cnr_fid, &stob_id);
-		m0_cc_stob_cr_credit(&stob_id, &accum);
+		m0_cc_stob_cr_credit(&stob_id, accum);
 	}
 	m0_cob_tx_credit(act->a_builder->b_ios_cdom, M0_COB_OP_NAME_ADD,
-			 &accum);
+			 accum);
 	m0_cob_tx_credit(act->a_builder->b_ios_cdom, M0_COB_OP_NAME_DEL,
-			 &accum);
-	*cred = accum;
+			 accum);
+	/* m0_mutex_unlock(&b.b_coblock); */
+	/* *cred = accum; */
 	return 0;
 }
 
@@ -2198,6 +2300,7 @@ static void cob_act(struct action *act, struct m0_be_tx *tx)
 	struct m0_be_emap_cursor  it = {};
 	struct m0_uint128         prefix;
 
+	/* m0_mutex_lock(&b.b_coblock); */
 	if (m0_fid_eq(&ca->coa_fid, &ios_ns->bb_backlink.bli_fid))
 		m0_cob_init(act->a_builder->b_ios_cdom, &cob);
 	else if (m0_fid_eq(&ca->coa_fid, &mds_ns->bb_backlink.bli_fid))
@@ -2230,6 +2333,7 @@ static void cob_act(struct action *act, struct m0_be_tx *tx)
 					       bo_u.u_emap.e_rc);
 		}
 	}
+	/* m0_mutex_unlock(&b.b_coblock); */
 }
 
 /**
