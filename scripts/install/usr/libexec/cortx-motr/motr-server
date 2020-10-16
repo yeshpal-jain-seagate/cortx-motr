@@ -261,6 +261,8 @@ m0_server()
     fi
 
     set -x
+
+    addb_opts=" -r ${MOTR_MOD_ADDB_RECORD_SIZE}"
     exec $binary -e $service_ep \
                     -A linuxstob:${addbstob_dir}addb-stobs \
                     -f $proc_fid $stob_type $stob_path $MOTR_M0D_OPTS \
