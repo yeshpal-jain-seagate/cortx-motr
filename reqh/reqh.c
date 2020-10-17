@@ -348,6 +348,8 @@ M0_INTERNAL int m0_reqh_addb2_init(struct m0_reqh *reqh, const char *location,
 
 	if (size == 0)
 		size = DEFAULT_ADDB2_RECORD_SIZE;
+	if (size > MAX_ADDB2_RECORD_SIZE)
+		size = MAX_ADDB2_RECORD_SIZE;
 	/**
 	 * @todo replace size constant (size)  with a value from confc.
 	 */
