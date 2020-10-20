@@ -28,6 +28,8 @@
 #include "lib/types.h"          /* uint32_t */
 #include "lib/mutex.h"          /* m0_mutex */
 
+#include "be/tbq.h"             /* m0_be_tbq */
+
 /**
  * @defgroup be
  *
@@ -40,8 +42,6 @@
  * - allow multiple operations in a single transaction;
  * - use m0_fom for tx state change or user operation wait;
  * - use m0_module for init()/fini().
- * - handle rc returned from tbc_next: if (!M0_IN(rc, (0, -ENOENT))) then abort
- *   tx_bulk execution.
  *
  * @{
  */
@@ -56,46 +56,27 @@ struct be_tx_bulk_worker;
 /**
  * User configuration with user-supplied callbacks for m0_be_tx_bulk.
  *
- * - tbc_next(), tbc_credit() and tbc_do() should be thread-safe because they
- *   can be called from any locality. They could also be called from different
- *   localities;
+ * - tbc_do() should be thread-safe because it can be called from any locality.
+ *   It could also be called from different localities at the same time;
  * - it's possible to have more than one tbc_do() call in a single transaction.
  */
 struct m0_be_tx_bulk_cfg {
+	struct m0_be_tbq_cfg  tbq_q_cfg;
 	/** BE domain for transactions */
 	struct m0_be_domain  *tbc_dom;
-	/** It's passed as a parameter to tbc_next, tbc_credit and tbc_do */
+	/** it's passed as a parameter to m0_be_tx_bulk_cfg::tbc_do() */
 	void                 *tbc_datum;
-	/**
-	 * Is there any remaining work to do?
-	 * If there is, then set *user to the some pointer and set op rc to 0.
-	 * *user will be passed to tbc_credit() and tbc_do().
-	 * If there is no work left, set op rc to -ENOENT.
-	 *
-	 * @see m0_be_op_rc_set()
-	 */
-	void                (*tbc_next)(struct m0_be_tx_bulk  *tb,
-	                                struct m0_be_op       *op,
-	                                void                  *datum,
-	                                void                 **user);
-	/** Accumulate m0_be_tx_credit and payload size for a new transaction */
-	void                (*tbc_credit)(struct m0_be_tx_bulk   *tb,
-	                                  struct m0_be_tx_credit *accum,
-	                                  m0_bcount_t            *accum_payload,
-	                                  void                   *datum,
-	                                  void                   *user);
-	/** Do some work in the context of a BE transaction */
+	/** do some work in the context of a BE transaction */
 	void                (*tbc_do)(struct m0_be_tx_bulk   *tb,
 	                              struct m0_be_tx        *tx,
 	                              struct m0_be_op        *op,
 	                              void                   *datum,
 	                              void                   *user);
-	/** Maximum allowed number of tbc_do() calls in a single transaction. */
-	uint32_t              tbc_max_work_per_tx;
 };
 
 struct m0_be_tx_bulk {
 	struct m0_be_tx_bulk_cfg  btb_cfg;
+	struct m0_be_tbq          btb_q;
 	uint32_t                  btb_worker_nr;
 	struct be_tx_bulk_worker *btb_worker;
 	/** @see m0_be_tx_bulk_status */
@@ -118,6 +99,17 @@ M0_INTERNAL void m0_be_tx_bulk_fini(struct m0_be_tx_bulk *tb);
  */
 M0_INTERNAL void m0_be_tx_bulk_run(struct m0_be_tx_bulk *tb,
                                    struct m0_be_op      *op);
+
+/** Add more work.  */
+M0_INTERNAL void m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
+                                   struct m0_be_op        *op,
+                                   struct m0_be_tx_credit *credit,
+                                   m0_bcount_t             payload_credit,
+                                   uint64_t                partition,
+                                   void                   *user);
+/* No new work is expected after this function is called. */
+M0_INTERNAL void m0_be_tx_bulk_end(struct m0_be_tx_bulk *tb);
+
 /**
  * Gets m0_be_tx_bulk result.
  * Can be called only after op from m0_be_tx_bulk_run is signalled.

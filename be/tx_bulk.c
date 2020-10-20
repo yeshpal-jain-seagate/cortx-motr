@@ -269,6 +269,17 @@ M0_INTERNAL void m0_be_tx_bulk_run(struct m0_be_tx_bulk *tb,
 	}
 }
 
+M0_INTERNAL void m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
+                                   struct m0_be_op        *op,
+                                   void                   *user,
+                                   struct m0_be_tx_credit *credit,
+                                   m0_bcount_t             payload_credit,
+                                   uint64_t                partition)
+{
+	m0_be_op_active(op);
+	m0_be_op_done(op);
+}
+
 M0_INTERNAL int m0_be_tx_bulk_status(struct m0_be_tx_bulk *tb)
 {
 	int rc;
