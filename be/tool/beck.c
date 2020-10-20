@@ -240,6 +240,7 @@ struct builder {
 	const char                *b_stob_path; /**< stob path for ad_domain */
 
 	uint64_t                   b_act;
+	uint64_t                   b_data;
 	uint64_t                   b_tx;
 	/** ioservice cob domain. */
 	struct m0_cob_domain      *b_ios_cdom;
@@ -702,6 +703,8 @@ static int scan(struct scanner *s)
 	int      i;
 	time_t   lasttime = time(NULL);
 	off_t    lastoff  = s->s_off;
+	uint64_t lastrecord = 0;
+	uint64_t lastdata = 0;
 
 	setvbuf(s->s_file, iobuf, _IOFBF, sizeof iobuf);
 	while (!signaled && (result = get(s, &magic, sizeof magic)) == 0) {
@@ -714,16 +717,22 @@ static int scan(struct scanner *s)
 			s->s_off &= ~0x7;
 		if (time(NULL) - lasttime > DELTA) {
 			printf("\nOffset: %15lli     Speed: %7.2f MB/s     "
-			       "Completion: %3i%%",
+			       "Completion: %3i%%     Action: %"PRIu64" records/s"
+			       "     Data Speed: %7.2f MB/s",
 			       (long long)s->s_off,
 			       ((double)s->s_off - lastoff) /
 			       DELTA / 1024.0 / 1024.0,
-			       (int)(s->s_off * 100 / s->s_size));
-			printf("/n queue depth");
-			for (i = 0; i < MAX_QUEUE; i++)
-				printf(" %"PRIu64, s->s_q[i]->q_nr);
+			       (int)(s->s_off * 100 / s->s_size),
+			       (b.b_act - lastrecord) / DELTA,
+			       ((double)b.b_data - lastdata) /
+			       DELTA / 1024.0 / 1024.0);
 			lasttime = time(NULL);
 			lastoff  = s->s_off;
+			lastrecord = b.b_act;
+			lastdata = b.b_data;
+			printf("  queue depth");
+			for (i = 0; i < MAX_QUEUE; i++)
+				printf(" %"PRIu64, s->s_q[i]->q_nr);
 		}
 	}
 	printf("\n%25s : %9s %9s %9s %9s\n",
@@ -1210,6 +1219,9 @@ static void emap_act(struct action *act, struct m0_be_tx *tx)
 			return;
 		}
 
+		b.b_data += ((ext.e_end - ext.e_start) << adom->sad_babshift)
+			    << adom->sad_bshift;
+
 		rc = emap_entry_lookup(adom, emap_key->ek_prefix, 0, &it);
 		/* No emap entry found for current stob, insert hole */
 		rc = rc ? M0_BE_OP_SYNC_RET(op,
@@ -1412,7 +1424,6 @@ static void builder_credit(struct m0_be_tx_bulk   *tb,
 	m0_mutex_lock(&b->b_lock);
 	act->a_ops->o_prep(act, accum);
 	m0_mutex_unlock(&b->b_lock);
-	b->b_act++;
 }
 
 static void builder_do(struct m0_be_tx_bulk   *tb,
@@ -1428,6 +1439,7 @@ static void builder_do(struct m0_be_tx_bulk   *tb,
 	act = user;
 	if (act != NULL) {
 		m0_mutex_lock(&b->b_lock);
+		b->b_act++;
 		act->a_ops->o_act(act, tx);
 		m0_mutex_unlock(&b->b_lock);
 		act->a_ops->o_fini(act);
