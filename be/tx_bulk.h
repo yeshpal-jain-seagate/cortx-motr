@@ -64,24 +64,6 @@ struct m0_be_tx_bulk_cfg {
 	struct m0_be_domain  *tbc_dom;
 	/** It is passed as parameter to tbc_next, tbc_credit and tbc_do */
 	void                 *tbc_datum;
-	/**
-	 * Is there any remaining work to do?
-	 * If there is, then set *user to the some pointer and set op rc to 0.
-	 * It will be passed to tbc_credit() and tbc_do().
-	 * If there is no work left, set op rc to -ENOENT.
-	 *
-	 * @see m0_be_op_rc_set()
-	 */
-	void                (*tbc_next)(struct m0_be_tx_bulk  *tb,
-	                                struct m0_be_op       *op,
-	                                void                  *datum,
-	                                void                 **user);
-	/** Accumulate m0_be_tx_credit and payload size for a new transaction */
-	void                (*tbc_credit)(struct m0_be_tx_bulk   *tb,
-	                                  struct m0_be_tx_credit *accum,
-	                                  m0_bcount_t            *accum_payload,
-	                                  void                   *datum,
-	                                  void                   *user);
 	/** Do some work in context of BE transaction */
 	void                (*tbc_do)(struct m0_be_tx_bulk   *tb,
 	                              struct m0_be_tx        *tx,
@@ -114,6 +96,17 @@ M0_INTERNAL void m0_be_tx_bulk_fini(struct m0_be_tx_bulk *tb);
  */
 M0_INTERNAL void m0_be_tx_bulk_run(struct m0_be_tx_bulk *tb,
                                    struct m0_be_op      *op);
+
+/** Add more work.  */
+M0_INTERNAL void m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
+                                   struct m0_be_op        *op,
+                                   struct m0_be_tx_credit *credit,
+                                   m0_bcount_t             payload_credit,
+                                   uint64_t                partition,
+                                   void                   *user);
+/* No new work is expected after this function is called. */
+M0_INTERNAL void m0_be_tx_bulk_end(struct m0_be_tx_bulk *tb);
+
 /**
  * Gets m0_be_tx_bulk result.
  * Can be called only after op from m0_be_tx_bulk_run is signalled.
