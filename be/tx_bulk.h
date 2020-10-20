@@ -29,6 +29,7 @@
 #include "lib/mutex.h"          /* m0_mutex */
 
 #include "be/tbq.h"             /* m0_be_tbq */
+#include "be/op.h"              /* m0_be_op */
 
 /**
  * @defgroup be
@@ -61,7 +62,7 @@ struct be_tx_bulk_worker;
  * - it's possible to have more than one tbc_do() call in a single transaction.
  */
 struct m0_be_tx_bulk_cfg {
-	struct m0_be_tbq_cfg  tbq_q_cfg;
+	struct m0_be_tbq_cfg  tbc_q_cfg;
 	/** BE domain for transactions */
 	struct m0_be_domain  *tbc_dom;
 	/** it's passed as a parameter to m0_be_tx_bulk_cfg::tbc_do() */
@@ -84,9 +85,12 @@ struct m0_be_tx_bulk {
 	/** protects access to m0_be_tx_bulk fields */
 	struct m0_mutex           btb_lock;
 	uint32_t                  btb_done_nr;
-	bool                      btb_stopping;
+	bool                      btb_tx_open_failed;
+	bool                      btb_the_end;
 	bool                      btb_done;
+	bool                      btb_termination_in_progress;
 	struct m0_be_op          *btb_op;
+	struct m0_be_op           btb_kill_put_op;
 };
 
 M0_INTERNAL int m0_be_tx_bulk_init(struct m0_be_tx_bulk     *tb,
@@ -101,7 +105,7 @@ M0_INTERNAL void m0_be_tx_bulk_run(struct m0_be_tx_bulk *tb,
                                    struct m0_be_op      *op);
 
 /** Add more work.  */
-M0_INTERNAL void m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
+M0_INTERNAL bool m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
                                    struct m0_be_op        *op,
                                    struct m0_be_tx_credit *credit,
                                    m0_bcount_t             payload_credit,

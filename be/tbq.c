@@ -74,6 +74,7 @@ M0_INTERNAL int m0_be_tbq_init(struct m0_be_tbq     *bbq,
 		 "bqc_producers_nr_max=%"PRIu32" bqc_consumers_nr_max=%"PRIu32,
 		 bbq, cfg->bqc_q_size_max,
 		 cfg->bqc_producers_nr_max, cfg->bqc_consumers_nr_max);
+	M0_PRE(M0_IS0(bbq));
 
 	bbq->bbq_cfg = *cfg;
 	bbq->bbq_enqueued = 0;
