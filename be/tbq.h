@@ -28,6 +28,10 @@
 /**
  * @defgroup be
  *
+ * Further directions
+ *
+ * - put() multiple items at once
+ *
  * Queues use lists in this way: items are added at tail and are removed from
  * the head.
  *
@@ -49,6 +53,7 @@ struct m0_be_tbq_data {
 	void                   *bbd_user;
 	struct m0_be_tx_credit  bbd_credit;
 	m0_bcount_t             bbd_payload_size;
+	bool                    bbd_done;
 };
 
 #define BETBQD_F "(qdata=%p bbd_user=%p bbd_credit="BETXCR_F" " \
