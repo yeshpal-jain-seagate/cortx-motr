@@ -359,7 +359,8 @@ static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
 		while (worker->tbw_data_nr <
 		       tb->btb_cfg.tbc_work_items_per_tx_max) {
 			data = &worker->tbw_data[worker->tbw_data_nr];
-			m0_be_tbq_peek(bbq, data);
+			if (!m0_be_tbq_peek(bbq, data))
+				break;
 			if (data->bbd_done)
 				break;
 			if (m0_be_should_break(&tb->btb_cfg.tbc_dom->bd_engine,
