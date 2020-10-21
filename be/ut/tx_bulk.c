@@ -189,14 +189,15 @@ void m0_be_ut_tx_bulk_usecase(void)
 {
 	struct be_ut_tx_bulk_usecase *bu;
 	struct m0_be_tx_bulk_cfg      tb_cfg = {
-		.tbc_q_cfg = {
+		.tbc_q_cfg                 = {
 			.bqc_q_size_max       = BE_UT_TX_BULK_Q_SIZE_MAX,
 			.bqc_producers_nr_max = 1,
 			.bqc_consumers_nr_max = 0x100,  /* XXX */
 		},
-		.tbc_workers_nr    = 0x40, /* XXX */
-		.tbc_partitions_nr = 1,    /* XXX */
-		.tbc_do    = &be_ut_tx_bulk_usecase_do,
+		.tbc_workers_nr            = 0x40, /* XXX */
+		.tbc_partitions_nr         = 1,    /* XXX */
+		.tbc_work_items_per_tx_max = 3,
+		.tbc_do                    = &be_ut_tx_bulk_usecase_do,
 	};
 	M0_ALLOC_PTR(bu);
 	M0_UT_ASSERT(bu != NULL);
@@ -356,14 +357,15 @@ static void be_ut_tx_bulk_state_test_run(struct be_ut_tx_bulk_state  *tbs,
                                          bool                         success)
 {
 	struct m0_be_tx_bulk_cfg tb_cfg = {
-		.tbc_q_cfg         = {
+		.tbc_q_cfg                 = {
 			.bqc_q_size_max       = BE_UT_TX_BULK_Q_SIZE_MAX,
 			.bqc_producers_nr_max = 1,
 			.bqc_consumers_nr_max = 0x100,  /* XXX */
 		},
-		.tbc_workers_nr    = 0x40, /* XXX */
-		.tbc_partitions_nr = 1,    /* XXX */
-		.tbc_do            = &be_ut_tx_bulk_state_do,
+		.tbc_workers_nr            = 0x40, /* XXX */
+		.tbc_partitions_nr         = 1,    /* XXX */
+		.tbc_work_items_per_tx_max = 1,
+		.tbc_do                    = &be_ut_tx_bulk_state_do,
 	};
 
 	tb_cfg.tbc_datum = tbs;
