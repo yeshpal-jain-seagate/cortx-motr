@@ -40,9 +40,10 @@
  * @see m0_be_ut_tx_bulk_usecase() for an example.
  *
  * Future directions
- * - allow multiple operations in a single transaction;
- * - use m0_fom for tx state change or user operation wait;
- * - use m0_module for init()/fini().
+ * - allow multiple operations in a single transaction
+ * - use m0_fom for tx state change or user operation wait
+ * - use m0_module for init()/fini()
+ * - support multiple partitions per worker
  *
  * @{
  */
@@ -63,6 +64,8 @@ struct be_tx_bulk_worker;
  */
 struct m0_be_tx_bulk_cfg {
 	struct m0_be_tbq_cfg  tbc_q_cfg;
+	uint64_t              tbc_workers_nr;
+	uint64_t              tbc_partitions_nr;
 	/** BE domain for transactions */
 	struct m0_be_domain  *tbc_dom;
 	/** it's passed as a parameter to m0_be_tx_bulk_cfg::tbc_do() */
@@ -77,7 +80,7 @@ struct m0_be_tx_bulk_cfg {
 
 struct m0_be_tx_bulk {
 	struct m0_be_tx_bulk_cfg  btb_cfg;
-	struct m0_be_tbq          btb_q;
+	struct m0_be_tbq         *btb_q;
 	uint32_t                  btb_worker_nr;
 	struct be_tx_bulk_worker *btb_worker;
 	/** @see m0_be_tx_bulk_status */
