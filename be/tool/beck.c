@@ -1655,7 +1655,6 @@ static int builder_init(struct builder *b)
 	if (b->b_be_config_file)
 		result = override_be_cfg_def_from_yaml(b->b_be_config_file,
 						       &ub->but_dom_cfg);
-	exit (1);
 	if (result != 0)
 		return M0_ERR(result);
 	result = m0_be_ut_backend_init_cfg(ub, &ub->but_dom_cfg, false);
@@ -1841,6 +1840,7 @@ static int  override_be_cfg_def_from_yaml(const char *yaml_file,
 	M0_ASSERT(fp != NULL);
 
 	if (!yaml_parser_initialize(&parser)) {
+		printf("Failed to initialize yaml parser.\n");
 		return -ENOMEM;
 	}
 
