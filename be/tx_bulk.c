@@ -417,7 +417,6 @@ M0_INTERNAL bool m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
 		return false;
 
 	M0_PRE(!tb->btb_the_end);
-	M0_ASSERT(partition == 0);
 
 	m0_be_tbq_lock(&tb->btb_q);
 	m0_be_tbq_put(&tb->btb_q, op, &data);
