@@ -66,6 +66,7 @@ struct m0_be_tx_bulk_cfg {
 	struct m0_be_tbq_cfg  tbc_q_cfg;
 	uint64_t              tbc_workers_nr;
 	uint64_t              tbc_partitions_nr;
+	uint64_t              tbc_work_items_per_tx_max;
 	/** BE domain for transactions */
 	struct m0_be_domain  *tbc_dom;
 	/** it's passed as a parameter to m0_be_tx_bulk_cfg::tbc_do() */

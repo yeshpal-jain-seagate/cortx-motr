@@ -801,16 +801,17 @@ static int balloc_groups_write(struct m0_balloc *bal)
 	}
 	m0_mutex_init(&bgs.bgs_lock);
 	tb_cfg = (struct m0_be_tx_bulk_cfg){
-		.tbc_q_cfg = {
+		.tbc_q_cfg                 = {
 			.bqc_q_size_max       = 0x100,
 			.bqc_producers_nr_max = 1,
 			.bqc_consumers_nr_max = 0x100,
 		},
-		.tbc_workers_nr    = 0x40,
-		.tbc_partitions_nr = 1,
-		.tbc_dom           = bal->cb_be_seg->bs_domain,
-		.tbc_datum         = &bgs,
-		.tbc_do            = &balloc_group_write_do,
+		.tbc_workers_nr            = 0x40,
+		.tbc_partitions_nr         = 1,
+		.tbc_work_items_per_tx_max = 1,
+		.tbc_dom                   = bal->cb_be_seg->bs_domain,
+		.tbc_datum                 = &bgs,
+		.tbc_do                    = &balloc_group_write_do,
 	};
 
 	rc = m0_be_tx_bulk_init(&tb, &tb_cfg);
