@@ -94,6 +94,7 @@ M0_INTERNAL int m0_be_tx_bulk_init(struct m0_be_tx_bulk     *tb,
 	/* Can't have more partitions that workers. For now. */
 	M0_PRE(tb_cfg->tbc_partitions_nr <= tb_cfg->tbc_workers_nr);
 	M0_PRE(tb_cfg->tbc_work_items_per_tx_max > 0);
+	M0_PRE(tb_cfg->tbc_q_cfg.bqc_item_length == 0);
 
 	tb->btb_cfg = *tb_cfg;
 	tb->btb_tx_open_failed = false;
@@ -110,6 +111,7 @@ M0_INTERNAL int m0_be_tx_bulk_init(struct m0_be_tx_bulk     *tb,
 	/* XXX error handling */
 	M0_ALLOC_ARR(tb->btb_q, tb->btb_cfg.tbc_partitions_nr);
 	M0_ASSERT(tb->btb_q != NULL);
+	tb->btb_cfg.tbc_q_cfg.bqc_item_length = sizeof(struct m0_be_tbq_data);
 	for (i = 0; i < tb_cfg->tbc_partitions_nr; ++i) {
 		rc = m0_be_tbq_init(&tb->btb_q[i], &tb->btb_cfg.tbc_q_cfg);
 		if (rc != 0)
@@ -246,7 +248,7 @@ static void be_tx_bulk_workers_terminate(struct m0_be_tx_bulk     *tb,
 		M0_ASSERT(terminate_partition < tb->btb_cfg.tbc_partitions_nr);
 		m0_be_op_reset(&tb->btb_kill_put_op);
 		m0_be_tbq_lock(&tb->btb_q[terminate_partition]);
-		m0_be_tbq_put(&tb->btb_q[terminate_partition],
+		M0_BE_TBQ_PUT(&tb->btb_q[terminate_partition],
 			      &tb->btb_kill_put_op, &data);
 		m0_be_tbq_unlock(&tb->btb_q[terminate_partition]);
 	}
@@ -275,9 +277,9 @@ static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
 		be_tx_bulk_unlock(tb);
 		if (drain_the_queue) {
 			m0_be_tbq_lock(bbq);
-			while (m0_be_tbq_peek(bbq, &data)) {
+			while (M0_BE_TBQ_PEEK(bbq, &data)) {
 				M0_BE_OP_SYNC(op,
-					      m0_be_tbq_get(bbq, &op, &data));
+					      M0_BE_TBQ_GET(bbq, &op, &data));
 			}
 			m0_be_tbq_unlock(bbq);
 		}
@@ -287,7 +289,7 @@ static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
 	} else {
 		m0_be_op_reset(&worker->tbw_op);
 		m0_be_tbq_lock(bbq);
-		m0_be_tbq_get(bbq, &worker->tbw_op, &worker->tbw_data[0]);
+		M0_BE_TBQ_GET(bbq, &worker->tbw_op, &worker->tbw_data[0]);
 		m0_be_tbq_unlock(bbq);
 		M0_LEAVE("worker=%p", worker);
 	}
@@ -359,7 +361,7 @@ static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
 		while (worker->tbw_data_nr <
 		       tb->btb_cfg.tbc_work_items_per_tx_max) {
 			data = &worker->tbw_data[worker->tbw_data_nr];
-			if (!m0_be_tbq_peek(bbq, data))
+			if (!M0_BE_TBQ_PEEK(bbq, data))
 				break;
 			if (data->bbd_done)
 				break;
@@ -367,7 +369,7 @@ static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
 					       &accum_credit,
 					       &data->bbd_credit))
 				break;
-			M0_BE_OP_SYNC(op, m0_be_tbq_get(bbq, &op, data));
+			M0_BE_OP_SYNC(op, M0_BE_TBQ_GET(bbq, &op, data));
 			m0_be_tx_credit_add(&accum_credit, &data->bbd_credit);
 			accum_payload_size += data->bbd_payload_size;
 			++worker->tbw_data_nr;
@@ -499,7 +501,7 @@ M0_INTERNAL bool m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
 	M0_PRE(!tb->btb_the_end);
 
 	m0_be_tbq_lock(&tb->btb_q[partition]);
-	m0_be_tbq_put(&tb->btb_q[partition], op, &data);
+	M0_BE_TBQ_PUT(&tb->btb_q[partition], op, &data);
 	m0_be_tbq_unlock(&tb->btb_q[partition]);
 
 	M0_POST(!tb->btb_the_end);   /* not taking the lock is intentional */
