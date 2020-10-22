@@ -144,7 +144,7 @@ static void be_ut_tbq_try_peek(struct be_ut_tbq_thread_param *param,
 	struct m0_buf         buf;
 	bool                  result;
 
-	result = m0_be_tbq_peek(ctx->butx_bbq, &data);
+	result = M0_BE_TBQ_PEEK(ctx->butx_bbq, &data);
 	if (result) {
 		++param->butqp_peeks_successful;
 		buf = M0_BUF_INIT_PTR(&ctx->butx_data[
@@ -176,7 +176,7 @@ static void be_ut_tbq_thread(void *_param)
 			m0_be_tbq_lock(bbq);
 			index = m0_atomic64_add_return(&ctx->butx_pos, 1) - 1;
 			be_ut_tbq_try_peek(param, ctx);
-			m0_be_tbq_put(bbq, op, &ctx->butx_data[index]);
+			M0_BE_TBQ_PUT(bbq, op, &ctx->butx_data[index]);
 			m0_be_tbq_unlock(bbq);
 			m0_be_op_wait(op);
 			ctx->butx_result[index].butr_put_before = before;
@@ -185,7 +185,7 @@ static void be_ut_tbq_thread(void *_param)
 		} else {
 			before = m0_atomic64_add_return(&ctx->butx_clock, 1);
 			m0_be_tbq_lock(bbq);
-			m0_be_tbq_get(bbq, op, &data);
+			M0_BE_TBQ_GET(bbq, op, &data);
 			be_ut_tbq_try_peek(param, ctx);
 			m0_be_tbq_unlock(bbq);
 			m0_be_op_wait(op);
@@ -210,6 +210,7 @@ static void be_ut_tbq_with_cfg(struct be_ut_tbq_cfg *test_cfg)
 		.bqc_q_size_max       = test_cfg->butc_q_size_max,
 		.bqc_producers_nr_max = test_cfg->butc_producers,
 		.bqc_consumers_nr_max = test_cfg->butc_consumers,
+		.bqc_item_length      = sizeof(struct m0_be_tbq_data),
 	};
 	struct be_ut_tbq_ctx          *ctx;
 	struct m0_be_tbq              *bbq;
