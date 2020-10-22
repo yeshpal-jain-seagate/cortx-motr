@@ -62,9 +62,9 @@ enum be_ut_tbq_test {
 };
 
 struct be_ut_tbq_cfg {
-	uint32_t butc_q_size_max;
-	uint32_t butc_producers;
-	uint32_t butc_consumers;
+	uint64_t butc_q_size_max;
+	uint64_t butc_producers;
+	uint64_t butc_consumers;
 	uint64_t butc_items_nr;
 	uint64_t butc_seed;
 };
@@ -213,12 +213,12 @@ static void be_ut_tbq_with_cfg(struct be_ut_tbq_cfg *test_cfg)
 	};
 	struct be_ut_tbq_ctx          *ctx;
 	struct m0_be_tbq              *bbq;
-	uint32_t                       threads_nr;
-	uint32_t                       items_nr = test_cfg->butc_items_nr;
+	uint64_t                       threads_nr;
+	uint64_t                       items_nr = test_cfg->butc_items_nr;
 	uint64_t                       i;
 	uint64_t                       seed = test_cfg->butc_seed;
-	uint32_t                       divisor;
-	uint32_t                       remainder;
+	uint64_t                       divisor;
+	uint64_t                       remainder;
 	struct be_ut_tbq_result       *r;
 	int                            rc;
 

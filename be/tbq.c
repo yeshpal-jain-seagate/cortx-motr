@@ -67,11 +67,11 @@ M0_TL_DEFINE(tbqop, static, struct be_tbq_wait_op);
 M0_INTERNAL int m0_be_tbq_init(struct m0_be_tbq     *bbq,
                                struct m0_be_tbq_cfg *cfg)
 {
-	uint32_t qitems_nr;
-	uint32_t i;
+	uint64_t qitems_nr;
+	uint64_t i;
 
-	M0_ENTRY("bbq=%p bqc_q_size_max=%"PRIu32" "
-		 "bqc_producers_nr_max=%"PRIu32" bqc_consumers_nr_max=%"PRIu32,
+	M0_ENTRY("bbq=%p bqc_q_size_max=%"PRIu64" "
+		 "bqc_producers_nr_max=%"PRIu64" bqc_consumers_nr_max=%"PRIu64,
 		 bbq, cfg->bqc_q_size_max,
 		 cfg->bqc_producers_nr_max, cfg->bqc_consumers_nr_max);
 	M0_PRE(M0_IS0(bbq));
@@ -116,8 +116,8 @@ M0_INTERNAL void m0_be_tbq_fini(struct m0_be_tbq *bbq)
 {
 	struct be_tbq_wait_op  *bwo;
 	struct be_tbq_item     *bqi;
-	uint32_t                qitems_nr;
-	uint32_t                i;
+	uint64_t                qitems_nr;
+	uint64_t                i;
 
 	M0_ENTRY("bbq="BETBQ_F, BETBQ_P(bbq));
 	M0_ASSERT_INFO(bbq->bbq_enqueued == bbq->bbq_dequeued,
@@ -161,7 +161,7 @@ M0_INTERNAL void m0_be_tbq_unlock(struct m0_be_tbq *bbq)
 	m0_mutex_unlock(&bbq->bbq_lock);
 }
 
-static uint32_t be_tbq_q_size(struct m0_be_tbq *bbq)
+static uint64_t be_tbq_q_size(struct m0_be_tbq *bbq)
 {
 	M0_PRE(m0_mutex_is_locked(&bbq->bbq_lock));
 	M0_ASSERT_INFO(bbq->bbq_enqueued >= bbq->bbq_dequeued,

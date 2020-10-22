@@ -63,9 +63,9 @@ struct m0_be_tbq_data {
 	(bqd)->bbd_payload_size
 
 struct m0_be_tbq_cfg {
-	uint32_t bqc_q_size_max;
-	uint32_t bqc_producers_nr_max;
-	uint32_t bqc_consumers_nr_max;
+	uint64_t bqc_q_size_max;
+	uint64_t bqc_producers_nr_max;
+	uint64_t bqc_consumers_nr_max;
 };
 
 /**
@@ -91,11 +91,11 @@ struct m0_be_tbq {
 	/** Is used to wait in m0_be_tbq_put() */
 	struct be_tbq_wait_op *bbq_ops_put;
 
-	uint32_t               bbq_enqueued;
-	uint32_t               bbq_dequeued;
+	uint64_t               bbq_enqueued;
+	uint64_t               bbq_dequeued;
 };
 
-#define BETBQ_F "(queue=%p bbq_enqueued=%"PRIu32" bbq_dequeued=%"PRIu32")"
+#define BETBQ_F "(queue=%p bbq_enqueued=%"PRIu64" bbq_dequeued=%"PRIu64")"
 #define BETBQ_P(bbq) (bbq), (bbq)->bbq_enqueued, (bbq)->bbq_dequeued
 
 M0_INTERNAL int m0_be_tbq_init(struct m0_be_tbq     *bbq,
