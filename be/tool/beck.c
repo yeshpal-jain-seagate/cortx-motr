@@ -36,6 +36,7 @@
 #include <time.h>             /* localtime_r */
 #include <pthread.h>
 #include <signal.h>           /* signal() to register ctrl + C handler */
+#include <yaml.h>
 
 #define M0_TRACE_SUBSYSTEM M0_TRACE_SUBSYS_BE
 #include "lib/trace.h"
@@ -69,20 +70,39 @@
 #include "ioservice/fid_convert.h" /* m0_fid_convert_cob2adstob */
 #include "ioservice/cob_foms.h"    /* m0_cc_stob_cr_credit */
 #include "be/extmap_internal.h"    /* m0_be_emap */
+#include "be/tx_bulk.h"   /* m0_be_tx_bulk */
 
 M0_TL_DESCR_DECLARE(ad_domains, M0_EXTERN);
 M0_TL_DECLARE(ad_domains, M0_EXTERN, struct ad_domain_map);
 
-struct queue;
+enum {
+	CTG_QUEUE_INDEX = 0,
+	COB_QUEUE_INDEX = 1,
+	EMAP_FIRST_QUEUE_INDEX = 2,
+	MAX_QUEUE = 9
+};
+
+struct queue {
+	pthread_mutex_t q_lock;
+	pthread_cond_t  q_cond;
+	struct action  *q_head;
+	struct action  *q_tail;
+	uint64_t        q_nr;
+	uint64_t        q_max;
+};
 
 struct scanner {
 	FILE		    *s_file;
+	off_t		     s_start_off;
 	off_t		     s_off;
 	off_t		     s_pos;
 	bool		     s_byte;
 	off_t		     s_size;
+	struct m0_mutex      s_lock;
 	struct m0_be_seg    *s_seg;
-	struct queue	    *s_q;
+	struct m0_thread    s_thread;
+	struct queue	    s_bnode_q;
+	struct queue	    *s_q[MAX_QUEUE];
 	/**
 	 * We use the following buffer as a cache to increase read performace.
 	 */
@@ -147,7 +167,7 @@ struct gen {
 enum action_opcode {
 	AO_INIT = 1,
 	AO_CTG,
-	AO_DONE,
+	AO_DONE = 20,
 	AO_NR
 };
 
@@ -160,6 +180,11 @@ struct action {
 	const struct action_ops *a_ops;
 	struct action           *a_next;
 	struct action           *a_prev;
+};
+
+struct bnode_queue {
+	struct action bq_act;
+	off_t         bq_fileoffset;
 };
 
 struct cob_action {
@@ -178,15 +203,6 @@ struct action_ops {
 	int  (*o_prep)(struct action *act, struct m0_be_tx_credit *cred);
 	void (*o_act) (struct action *act, struct m0_be_tx *tx);
 	void (*o_fini)(struct action *act);
-};
-
-struct queue {
-	pthread_mutex_t q_lock;
-	pthread_cond_t  q_cond;
-	struct action  *q_head;
-	struct action  *q_tail;
-	uint64_t        q_nr;
-	uint64_t        q_max;
 };
 
 enum { CACHE_SIZE = 1000000 };
@@ -224,15 +240,18 @@ struct builder {
 	struct m0_stob_domain     *b_ad_dom; /**< stob domain pointer */
 	struct ad_dom_info	 **b_ad_info; /**< ad_domain info array */
 	struct m0_thread           b_thread;
-	struct queue              *b_q;
+	struct queue              *b_q[MAX_QUEUE];
 	struct queue               b_qq;
 	struct m0_be_tx_credit     b_cred;
 	struct cache	           b_cache;
 	uint64_t                   b_size;
 	const char                *b_dom_path;
 	const char                *b_stob_path; /**< stob path for ad_domain */
+	const char                *b_be_config_file; /** BE configuration */
 
 	uint64_t                   b_act;
+	uint64_t                   b_act_queue[MAX_QUEUE];
+	uint64_t                   b_data;
 	uint64_t                   b_tx;
 	/** ioservice cob domain. */
 	struct m0_cob_domain      *b_ios_cdom;
@@ -243,6 +262,12 @@ struct builder {
 	 * construct dix layout.
 	 */
 	struct m0_fid              b_pver_fid;
+	struct m0_mutex            b_lock;
+	int                        b_qid;
+	struct m0_mutex            b_lock_idx;
+	struct m0_mutex            b_emaplock[30];
+	struct m0_mutex            b_coblock;
+	struct m0_mutex            b_ctglock;
 };
 
 struct emap_action {
@@ -281,8 +306,9 @@ static int  scanner_init   (struct scanner *s);
 static int  builder_init   (struct builder *b);
 static void builder_fini   (struct builder *b);
 static void ad_dom_fini    (struct builder *b);
+static int builder_thread_init(struct builder *b);
 static void builder_thread (struct builder *b);
-static void builder_process(struct builder *b);
+/* static void builder_process(struct builder *b); */
 
 static int format_header_verify(const struct m0_format_header *h,
 				uint16_t rtype);
@@ -330,7 +356,12 @@ static void  emap_fini(struct action *act);
 static int   emap_kv_get(struct scanner *s, const struct be_btree_key_val *kv,
 		         struct m0_buf *key_buf, struct m0_buf *val_buf);
 static void  sig_handler(int num);
+static int   override_be_cfg_def_from_yaml(const char               *yaml_file,
+					   struct m0_be_domain_cfg  *cfg,
+					   struct m0_be_tx_bulk_cfg *tb_cfg);
 
+static int scanner_thread_init(struct scanner *s);
+static void scanner_thread(struct scanner *s);
 static const struct recops btreeops;
 static const struct recops bnodeops;
 static const struct recops seghdrops;
@@ -400,14 +431,16 @@ static struct btype bt[] = {
 
 enum {
 	MAX_GEN    	 =     256,
-	MAX_QUEUED  	 = 1000000,
+	MAX_QUEUED  	 = 100000,
 	MAX_REC_SIZE     = 64*1024,
 	/**
 	 * This value is arrived on the basis of max time difference between
 	 * mkfs run on local and remote node and the assumption that time
 	 * difference between nodes is negligible.
 	 */
-	MAX_GEN_DIFF_SEC = 30
+	MAX_GEN_DIFF_SEC = 30,
+	MAX_KEY_LEN      = 256,
+	MAX_VALUE_LEN    = 256
 };
 
 /** It is used to recover meta data of component catalogue store. */
@@ -436,6 +469,20 @@ static bool  dry_run = false;
 static bool  disable_directio = false;
 static bool  signaled = false;
 
+static struct m0_be_tx_bulk_cfg default_tb_cfg = (struct m0_be_tx_bulk_cfg){
+		.tbc_q_cfg = {
+			.bqc_q_size_max       = 1000,
+			.bqc_producers_nr_max = 1,
+			.bqc_consumers_nr_max = 0x100,
+		},
+			.tbc_workers_nr = 0x40,
+			.tbc_partitions_nr = MAX_QUEUE,
+			.tbc_work_items_per_tx_max = 1,
+		//	.tbc_next   = &builder_next,
+	//		.tbc_credit = &builder_credit,
+	};
+
+
 #define FLOG(level, rc, s)						\
 	M0_LOG(level, " rc=%d  at offset: %"PRId64" errno: %s (%i), eof: %i", \
 	       (rc), ftell(s->s_file), strerror(errno), errno, feof(s->s_file))
@@ -458,10 +505,13 @@ int main(int argc, char **argv)
 	bool                   ut           = false;
 	bool                   version      = false;
 	bool                   print_gen_id = false;
-	struct queue           q            = {};
+	bool                   parse_trace  = false;
+	struct queue           q[MAX_QUEUE] = {};
 	int                    result;
 	uint64_t	       gen_id	    = 0;
 	struct m0_be_tx_credit max;
+	int                    i;
+	FILE                  *fp;
 
 	m0_node_uuid_string_set(NULL);
 	result = m0_init(&instance);
@@ -485,6 +535,13 @@ int main(int argc, char **argv)
 		   M0_FORMATARG('g', "Generation Identifier.", "%"PRIu64,
 				&s.s_gen),
 		   M0_FLAGARG('V', "Version info.", &version),
+		   M0_FLAGARG('T', "parse trace log produced earlier"
+			      " (trace data is read from STDIN)",
+			      &parse_trace),
+		   M0_STRINGARG('y', "YAML file path",
+			   LAMBDA(void, (const char *s) {
+				   b.b_be_config_file = s;
+				   })),
 		   M0_STRINGARG('a', "stob domain path",
 			   LAMBDA(void, (const char *s) {
 				   b.b_stob_path = s;
@@ -501,6 +558,12 @@ int main(int argc, char **argv)
 	}
 	if (version) {
 		m0_build_info_print();
+		return EX_OK;
+	}
+	if (parse_trace) {
+		m0_node_uuid_string_set(NULL);
+		m0_trace_parse(stdin, stdout, NULL,
+			       M0_TRACE_PARSE_DEFAULT_FLAGS, 0, 0);
 		return EX_OK;
 	}
 	if (dry_run)
@@ -529,6 +592,14 @@ int main(int argc, char **argv)
 		printf("Snapshot size: %"PRId64".\n", s.s_size);
 	}
 
+	if (b.b_be_config_file && !dry_run && !print_gen_id) {
+		fp = fopen(b.b_be_config_file, "r");
+		if (fp == NULL)
+			err(EX_NOINPUT, "Failed to open yaml file \"%s\".",
+			    b.b_be_config_file);
+		fclose(fp);
+	}
+
 	generation_id_get(s.s_file, &gen_id);
 	if (print_gen_id) {
 		generation_id_print(gen_id);
@@ -541,11 +612,15 @@ int main(int argc, char **argv)
 	if (s.s_gen != 0) {
 		printf("\nReceived source segment header generation id\n");
 		generation_id_print(s.s_gen);
+		printf("\n");
+		fflush(stdout);
 	}
 
 	s.s_gen = gen_id ?: s.s_gen;
 	printf("\nSource segment header generation id to be used by beck.\n");
 	generation_id_print(s.s_gen);
+	printf("\n");
+	fflush(stdout);
 	/*
 	 *  If both segment's generation identifier is corrupted then abort
 	 *  beck tool.
@@ -559,8 +634,11 @@ int main(int argc, char **argv)
 	 * new segment.
 	 */
 	if (!dry_run) {
-		qinit(&q, MAX_QUEUED);
-		s.s_q = b.b_q = &q;
+			qinit(&s.s_bnode_q, 1000000);
+		for (i = 0; i < MAX_QUEUE; i++) {
+			qinit(&q[i], MAX_QUEUED);
+			s.s_q[i] = b.b_q[i] = &q[i];
+		}
 		result = builder_init(&b);
 		s.s_seg = b.b_seg;
 		m0_be_engine_tx_size_max(&b.b_dom->bd_engine, &max, NULL);
@@ -568,6 +646,8 @@ int main(int argc, char **argv)
 		if (result != 0)
 			err(EX_CONFIG, "Cannot initialise builder.");
 	}
+	result = M0_THREAD_INIT(&s.s_thread, struct scanner *,
+				scanner_thread_init, &scanner_thread, &s, "scannner");
 	result = scanner_init(&s);
 	if (result != 0)
 		err(EX_CONFIG, "Cannot initialise scanner.");
@@ -580,10 +660,18 @@ int main(int argc, char **argv)
 		warn("Scan failed: %d.", result);
 
 	if (!dry_run) {
-		qput(&q, builder_action(&b, sizeof(struct action), AO_DONE,
-					&done_ops));
+			qput(&s.s_bnode_q, scanner_action(sizeof(struct action),
+							  AO_DONE, NULL));
+
+		for (i = 0; i < MAX_QUEUE; i++)
+			qput(&q[i], builder_action(&b, sizeof(struct action), AO_DONE,
+						&done_ops));
 		builder_fini(&b);
-		qfini(&q);
+		m0_thread_join(&s.s_thread);
+		m0_thread_fini(&s.s_thread);
+		qfini(&s.s_bnode_q);
+		for (i = 0; i < MAX_QUEUE; i++)
+			qfini(&q[i]);
 	}
 	fini();
 	if (spath != NULL)
@@ -592,9 +680,48 @@ int main(int argc, char **argv)
 	return EX_OK;
 }
 
+static int scanner_thread_init(struct scanner *s)
+{
+
+#if 0
+	struct m0_bitmap t3bm;
+	int result;
+
+	M0_ASSERT(m0_bitmap_init(&t3bm, MAX_QUEUE+1) == 0);
+
+	m0_bitmap_set(&t3bm, 2, true);
+	result = m0_thread_confine(&s->s_thread, &t3bm);
+	m0_bitmap_fini(&t3bm);
+	return result;
+#endif
+	return 0;
+}
+
+static void scanner_thread(struct scanner *s)
+{
+	struct m0_be_bnode node;
+
+	struct bnode_queue *bq;
+	struct btype       *b;
+	int                 idx;
+	int rc;
+
+	do {
+		bq  = (struct bnode_queue *)qget(&s->s_bnode_q);
+		if (bq->bq_act.a_opc != AO_DONE) {
+			rc = getat(s, bq->bq_fileoffset, &node, sizeof node);
+			M0_ASSERT(rc == 0);
+			idx  = node.bt_backlink.bli_type;
+			b = &bt[idx];
+			b->b_proc(s, b, &node);
+			m0_free(bq);
+		}
+	} while (bq->bq_act.a_opc != AO_DONE);
+}
+
 static char iobuf[4*1024*1024];
 
-enum { DELTA = 60 };
+enum { DELTA = 10 };
 
 static void generation_id_print(uint64_t gen)
 {
@@ -684,6 +811,9 @@ static int scan(struct scanner *s)
 	int      i;
 	time_t   lasttime = time(NULL);
 	off_t    lastoff  = s->s_off;
+	uint64_t lastrecord = 0;
+	uint64_t lastrecordqueue[MAX_QUEUE] = {};
+	uint64_t lastdata = 0;
 
 	setvbuf(s->s_file, iobuf, _IOFBF, sizeof iobuf);
 	while (!signaled && (result = get(s, &magic, sizeof magic)) == 0) {
@@ -696,13 +826,27 @@ static int scan(struct scanner *s)
 			s->s_off &= ~0x7;
 		if (time(NULL) - lasttime > DELTA) {
 			printf("\nOffset: %15lli     Speed: %7.2f MB/s     "
-			       "Completion: %3i%%",
+			       "Completion: %3i%%     Action: %"PRIu64" records/s"
+			       "     Data Speed: %7.2f MB/s",
 			       (long long)s->s_off,
 			       ((double)s->s_off - lastoff) /
 			       DELTA / 1024.0 / 1024.0,
-			       (int)(s->s_off * 100 / s->s_size));
+			       (int)(s->s_off * 100 / s->s_size),
+			       (b.b_act - lastrecord) / DELTA,
+			       ((double)b.b_data - lastdata) /
+			       DELTA / 1024.0 / 1024.0);
 			lasttime = time(NULL);
 			lastoff  = s->s_off;
+			lastrecord = b.b_act;
+			lastdata = b.b_data;
+			printf("  Action stats");
+			for (i = 0; i < MAX_QUEUE; i++) {
+				printf(" %"PRIu64, (b.b_act_queue[i] - lastrecordqueue[i]) / DELTA);
+				lastrecordqueue[i] = b.b_act_queue[i];
+			}
+			printf("  queue depth");
+			for (i = 0; i < 1; i++)
+				printf(" %"PRIu64, s->s_q[i]->q_nr);
 		}
 	}
 	printf("\n%25s : %9s %9s %9s %9s\n",
@@ -904,6 +1048,7 @@ static int getat(struct scanner *s, off_t off, void *buf, size_t nob)
 	int   result = 0;
 	FILE *f      = s->s_file;
 
+	m0_mutex_lock(&s->s_lock);
 	if (off != s->s_pos)
 		result = fseeko(f, off, SEEK_SET);
 	if (result != 0) {
@@ -926,12 +1071,14 @@ static int getat(struct scanner *s, off_t off, void *buf, size_t nob)
 		FLOG(M0_FATAL, result, s);
 		s->s_pos = -1;
 	}
+	m0_mutex_unlock(&s->s_lock);
 	return M0_RC(result);
 }
 
 static int deref(struct scanner *s, const void *addr, void *buf, size_t nob)
 {
 	off_t off = addr - s->s_seg->bs_addr;
+
 
 	if (m0_be_seg_contains(s->s_seg, addr) &&
 	    m0_be_seg_contains(s->s_seg, addr + nob - 1)) {
@@ -949,6 +1096,7 @@ static int deref(struct scanner *s, const void *addr, void *buf, size_t nob)
 static int get(struct scanner *s, void *buf, size_t nob)
 {
 	int result = 0;
+	s->s_start_off = s->s_off;
 	if (!(s->s_off >= s->s_chunk_pos &&
 	      s->s_off + nob < s->s_chunk_pos + sizeof s->s_chunk)) {
 		result = getat(s, s->s_off, s->s_chunk, sizeof s->s_chunk);
@@ -1014,6 +1162,7 @@ static int bnode(struct scanner *s, struct rectype *r, char *buf)
 	int                 idx  = node->bt_backlink.bli_type;
 	struct btype       *b;
 	struct bstats      *c;
+	struct bnode_queue *bq;
 
 	if (!IS_IN_ARRAY(idx, bt) || bt[idx].b_type == 0)
 		idx = ARRAY_SIZE(bt) - 1;
@@ -1028,8 +1177,12 @@ static int bnode(struct scanner *s, struct rectype *r, char *buf)
 	b = &bt[idx];
 	c = &b->b_stats;
 	c->c_node++;
-	if (!dry_run && b->b_proc != NULL)
-		b->b_proc(s, b, node);
+	if (!dry_run && b->b_proc != NULL) {
+	//	b->b_proc(s, b, node);
+		bq = scanner_action(sizeof *bq, AO_INIT, NULL);
+		bq->bq_fileoffset = s->s_start_off;
+		qput(&s->s_bnode_q, &bq->bq_act);
+	}
 	c->c_kv += node->bt_num_active_key;
 	if (node->bt_isleaf) {
 		c->c_leaf++;
@@ -1051,9 +1204,10 @@ static int bnode_check(struct scanner *s, struct rectype *r, char *buf)
 }
 
 static struct m0_stob_ad_domain *emap_dom_find(const struct action *act,
-					       const struct m0_fid *emap_fid)
+					       const struct m0_fid *emap_fid,
+					       int  *lockid)
 {
-	struct m0_stob_ad_domain *adom;
+	struct m0_stob_ad_domain *adom = NULL;
 	int			  i;
 
 	for (i = 0; i < act->a_builder->b_ad_dom_count; i++) {
@@ -1063,6 +1217,7 @@ static struct m0_stob_ad_domain *emap_dom_find(const struct action *act,
 			break;
 		}
 	}
+	*lockid = i;
 	return (i == act->a_builder->b_ad_dom_count) ? NULL: adom;
 }
 
@@ -1072,30 +1227,35 @@ static const struct action_ops emap_ops = {
 	.o_fini = &emap_fini
 };
 
-static int emap_proc(struct scanner *s, struct btype *b,
+static int emap_proc(struct scanner *s, struct btype *btype,
 		     struct m0_be_bnode *node)
 {
-	struct emap_action   *emap_act;
-	int 		      i;
-	int 		      ret = 0;
+	struct m0_stob_ad_domain *adom = NULL;
+	struct emap_action       *ea;
+	int                       id;
+	int 		          i;
+	int 		          ret = 0;
 
 	for (i = 0; i < node->bt_num_active_key; i++) {
-		emap_act = action_alloc(sizeof *emap_act,
-					AO_INIT,
-					&emap_ops);
-		emap_act->emap_fid = node->bt_backlink.bli_fid;
-		emap_act->emap_key = M0_BUF_INIT_PTR(&emap_act->emap_key_data);
-		emap_act->emap_val = M0_BUF_INIT_PTR(&emap_act->emap_val_data);
+		ea = action_alloc(sizeof *ea, AO_INIT, &emap_ops);
+		ea->emap_fid = node->bt_backlink.bli_fid;
+		ea->emap_key = M0_BUF_INIT_PTR(&ea->emap_key_data);
+		ea->emap_val = M0_BUF_INIT_PTR(&ea->emap_val_data);
 
 		ret = emap_kv_get(s, &node->bt_kv_arr[i],
-				  &emap_act->emap_key, &emap_act->emap_val);
+				  &ea->emap_key, &ea->emap_val);
 		if (ret != 0) {
 			btree_bad_kv_count_update(node->bt_backlink.bli_type, 1);
-			m0_free(emap_act);
+			m0_free(ea);
 			continue;
 		}
 
-		qput(s->s_q, &emap_act->emap_act);
+	        ea->emap_act.a_builder = &b;
+		adom = emap_dom_find(&ea->emap_act, &ea->emap_fid, &id);
+		if (adom != NULL) {
+			ea->emap_act.a_opc = EMAP_FIRST_QUEUE_INDEX + id;
+			qput(s->s_q[0]/*id + EMAP_FIRST_QUEUE_INDEX*/, &ea->emap_act);
+		}
 	}
 	return ret;
 }
@@ -1123,9 +1283,11 @@ static int emap_prep(struct action *act, struct m0_be_tx_credit *credit)
 	struct m0_be_emap_key    *emap_key;
 	int 			  rc;
 	struct m0_be_emap_cursor  it = {};
-
-	adom = emap_dom_find(act, &emap_ac->emap_fid);
+	int lid;
+	adom = emap_dom_find(act, &emap_ac->emap_fid, &lid);
+	m0_mutex_lock(&b.b_emaplock[lid]);
 	if (adom == NULL) {
+		m0_mutex_unlock(&b.b_emaplock[lid]);
 		M0_LOG(M0_ERROR, "Invalid FID for emap record found !!!");
 		m0_free(act);
 		return M0_RC(-EINVAL);
@@ -1145,6 +1307,7 @@ static int emap_prep(struct action *act, struct m0_be_tx_credit *credit)
 		m0_be_emap_credit(&adom->sad_adata, M0_BEO_PASTE,
 				  BALLOC_FRAGS_MAX + 1, credit);
 	}
+	m0_mutex_unlock(&b.b_emaplock[lid]);
 	return 0;
 }
 
@@ -1158,8 +1321,11 @@ static void emap_act(struct action *act, struct m0_be_tx *tx)
 	struct m0_be_emap_rec    *emap_val;
 	struct m0_be_emap_cursor  it = {};
 	struct m0_ext             in_ext;
+	int lid;
 
-	adom = emap_dom_find(act, &emap_ac->emap_fid);
+	adom = emap_dom_find(act, &emap_ac->emap_fid, &lid);
+
+	b.b_act_queue[EMAP_FIRST_QUEUE_INDEX + lid]++;
 	emap_val = emap_ac->emap_val.b_addr;
 	if (emap_val->er_value != AET_HOLE) {
 		emap_key = emap_ac->emap_key.b_addr;
@@ -1173,10 +1339,15 @@ static void emap_act(struct action *act, struct m0_be_tx *tx)
 					  tx, &ext,
 					  M0_BALLOC_NORMAL_ZONE);
 		if (rc != 0) {
-			M0_LOG(M0_ERROR, "Failed to reserve extent rc=%d", rc);
+		//	m0_mutex_unlock(&b.balloclock[lid]);
+			M0_LOG(M0_ERROR, "Failed to reseve extent rc=%d", rc);
 			return;
 		}
 
+		b.b_data += ((ext.e_end - ext.e_start) << adom->sad_babshift)
+			    << adom->sad_bshift;
+
+		m0_mutex_lock(&b.b_emaplock[lid]);
 		rc = emap_entry_lookup(adom, emap_key->ek_prefix, 0, &it);
 		/* No emap entry found for current stob, insert hole */
 		rc = rc ? M0_BE_OP_SYNC_RET(op,
@@ -1221,6 +1392,7 @@ static void emap_act(struct action *act, struct m0_be_tx *tx)
 			m0_be_op_fini(&it.ec_op);
 			m0_be_emap_close(&it);
 		}
+		m0_mutex_unlock(&b.b_emaplock[lid]);
 	}
 
 	if (rc != 0)
@@ -1312,7 +1484,7 @@ static void genadd(uint64_t gen)
 		}
 	}
 }
-
+#if 0
 static void builder_process(struct builder *b)
 {
 	struct action      *act;
@@ -1336,13 +1508,148 @@ static void builder_process(struct builder *b)
 	b->b_cred = M0_BE_TX_CREDIT(0, 0);
 	b->b_tx++;
 }
+#endif
+#if 0
+static void builder_next(struct m0_be_tx_bulk  *tb,
+			 struct m0_be_op       *op,
+			 void                  *datum,
+			 void                 **user)
+{
+	int index;
+	struct action  *act;
+	struct builder *b = datum;
+	m0_be_op_active(op);
+
+	m0_mutex_lock(&b->b_lock_idx);
+	index = b->b_qid;
+	b->b_qid++;
+	if (b->b_qid == MAX_QUEUE)
+		b->b_qid = 0;
+	m0_mutex_unlock(&b->b_lock_idx);
+	act = qtry(b->b_q[index]);
+	if (1 || act != NULL) {
+		*user = act;
+		m0_be_op_rc_set(op, 0);
+	} else
+		m0_be_op_rc_set(op, -ENOENT);
+	m0_be_op_done(op);
+}
+
+static void builder_credit(struct m0_be_tx_bulk   *tb,
+			   struct m0_be_tx_credit *accum,
+			   m0_bcount_t            *accum_payload,
+			   void                   *datum,
+			   void                   *user)
+{
+	struct action  *act;
+	struct builder *b = datum;
+
+	act = user;
+	if (act == NULL)
+		return;
+	act->a_builder = b;
+	m0_mutex_lock(&b->b_lock);
+	act->a_ops->o_prep(act, accum);
+	m0_mutex_unlock(&b->b_lock);
+}
+#endif
+static void builder_do(struct m0_be_tx_bulk   *tb,
+		       struct m0_be_tx        *tx,
+		       struct m0_be_op        *op,
+		       void                   *datum,
+		       void                   *user)
+{
+	struct action  *act;
+	struct builder *b = datum;
+	m0_be_op_active(op);
+
+	act = user;
+	if (act != NULL) {
+		//m0_mutex_lock(&b->b_lock);
+		b->b_act++;
+		act->a_ops->o_act(act, tx);
+		//m0_mutex_unlock(&b->b_lock);
+		act->a_ops->o_fini(act);
+		m0_free(act);
+		b->b_tx++;
+	}
+	m0_be_op_done(op);
+}
+
+static void builder_work_put(struct m0_be_tx_bulk *tb, struct builder *b)
+{
+	struct action                 *act;
+	struct m0_be_tx_credit         credit;
+	bool                           put_successful;
+	int                            rc;
+
+	do {
+		act = qget(b->b_q[0]);
+		if (act->a_opc != AO_DONE) {
+			credit = M0_BE_TX_CREDIT(0, 0);
+			act->a_builder = b;
+			rc = act->a_ops->o_prep(act, &credit);
+			if (rc != 0)
+				continue;
+			M0_BE_OP_SYNC(op, put_successful =
+				      m0_be_tx_bulk_put(tb, &op, &credit, 0, act->a_opc, act));
+			if (!put_successful)
+				break;
+		}
+	} while (act->a_opc != AO_DONE);
+}
+
+static int builder_thread_init(struct builder *b)
+{
+#if 0
+	struct m0_bitmap t3bm;
+	int result;
+
+	M0_ASSERT(m0_bitmap_init(&t3bm, MAX_QUEUE+1) == 0);
+	m0_bitmap_set(&t3bm, 3, true);
+	result = m0_thread_confine(&b->b_thread, &t3bm);
+	m0_bitmap_fini(&t3bm);
+	return result;
+#endif
+	return 0;
+}
 
 static void builder_thread(struct builder *b)
 {
-	struct m0_be_tx_credit delta = {};
-	struct action         *act;
-	int		       ret;
+	/* struct m0_be_tx_credit delta = {};
+	 * struct action         *act;
+	 * int		       ret; */
+	struct m0_be_op                 op = {};
+	struct m0_be_tx_bulk_cfg        tb_cfg;
+	struct m0_be_tx_bulk            tb = {};
+	int                             rc;
 
+
+	tb_cfg = default_tb_cfg;
+	tb_cfg.tbc_dom    =  b->b_dom; //b->b_seg->bs_domain, //TODO: Need to check
+	tb_cfg.tbc_datum  = b;
+	tb_cfg.tbc_do     = &builder_do,
+
+	rc = m0_be_tx_bulk_init(&tb, &tb_cfg);
+	if (rc == 0) {
+#if 1
+		m0_be_op_init(&op);
+		m0_be_tx_bulk_run(&tb, &op);
+		builder_work_put(&tb, b);
+		m0_be_op_wait(&op);
+		m0_be_op_fini(&op);
+		rc = m0_be_tx_bulk_status(&tb);
+		m0_be_tx_bulk_fini(&tb);
+#else
+		M0_BE_OP_SYNC(op, m0_be_tx_bulk_run(&tb, &op));
+		rc = m0_be_tx_bulk_status(&tb);
+		m0_be_tx_bulk_fini(&tb);
+#endif
+
+	}
+
+
+#if 0
 	do {
 		delta = M0_BE_TX_CREDIT(0, 0);
 		act = qget(b->b_q);
@@ -1362,6 +1669,7 @@ static void builder_thread(struct builder *b)
 			b->b_act++;
 		}
 	} while (act->a_opc != AO_DONE);
+#endif
 	M0_ASSERT(b->b_qq.q_nr == 0);
 
 	/* Below clean up used as m0_be_ut_backend_fini()  fails because of
@@ -1483,6 +1791,13 @@ static int builder_init(struct builder *b)
 		b->b_dom_path[0] == '/' ? "" : "./", b->b_dom_path);
 	ub->but_dom_cfg.bc_engine.bec_reqh = &b->b_reqh;
 	m0_be_ut_backend_cfg_default(&ub->but_dom_cfg);
+	/* Check for any BE configuration overrides. */
+	if (b->b_be_config_file)
+		result = override_be_cfg_def_from_yaml(b->b_be_config_file,
+						       &ub->but_dom_cfg,
+						       &default_tb_cfg);
+	if (result != 0)
+		return M0_ERR(result);
 	result = m0_be_ut_backend_init_cfg(ub, &ub->but_dom_cfg, false);
 	if (result != 0)
 		return M0_ERR(result);
@@ -1528,7 +1843,7 @@ static int builder_init(struct builder *b)
 		return M0_ERR(result);
 	qinit(&b->b_qq, UINT64_MAX);
 	result = M0_THREAD_INIT(&b->b_thread, struct builder *,
-				NULL, &builder_thread, b, "builder");
+				builder_thread_init, &builder_thread, b, "builder");
 	return M0_RC(result);
 }
 
@@ -1564,6 +1879,174 @@ static void builder_fini(struct builder *b)
 
 	printf("builder: actions: %9"PRId64" txs: %9"PRId64"\n",
 	       b->b_act, b->b_tx);
+}
+
+static void override_be_cfg_defaults(struct m0_be_domain_cfg  *dom_cfg,
+				     struct m0_be_tx_bulk_cfg *tb_cfg,
+			     	     const char               *str_key,
+			     	     const char               *str_value)
+{
+	uint64_t  value1_64;
+	uint64_t  value2_64;
+	char     *s1;
+	char     *s2;
+	bool      value_overridden = true;
+
+	if (m0_streq(str_key,"bec_tx_active_max"))
+		dom_cfg->bc_engine.bec_tx_active_max = m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "bec_group_nr"))
+		dom_cfg->bc_engine.bec_group_nr = m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "tgc_tx_nr_max"))
+		dom_cfg->bc_engine.bec_group_cfg.tgc_tx_nr_max = m0_strtou64(str_value,
+									 0, 10);
+	else if (m0_streq(str_key, "tgc_size_max")) {
+		s1 = m0_strdup(str_value);
+		s2 = strchr(s1, ',');
+
+		*s2 = '\0';
+		s2++;
+
+		value1_64 = m0_strtou64(s1, 0, 10);
+		value2_64 = m0_strtou64(s2, 0, 10);
+		m0_free(s1);
+
+		dom_cfg->bc_engine.bec_group_cfg.tgc_size_max =
+					M0_BE_TX_CREDIT(value1_64, value2_64);
+	}
+	else if (m0_streq(str_key, "tgc_payload_max"))
+		dom_cfg->bc_engine.bec_group_cfg.tgc_payload_max =
+						m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "bec_tx_size_max")) {
+		s1 = m0_strdup(str_value);
+		s2 = strchr(s1, ',');
+
+		*s2 = '\0';
+		s2++;
+
+		value1_64 = m0_strtou64(s1, 0, 10);
+		value2_64 = m0_strtou64(s2, 0, 10);
+		m0_free(s1);
+
+		dom_cfg->bc_engine.bec_tx_size_max = M0_BE_TX_CREDIT(value1_64,
+								 value2_64);
+	}
+	else if (m0_streq(str_key, "bec_tx_payload_max"))
+		dom_cfg->bc_engine.bec_tx_payload_max = m0_strtou64(str_value,
+								0, 10);
+	else if (m0_streq(str_key, "bec_group_freeze_timeout_min"))
+		dom_cfg->bc_engine.bec_group_freeze_timeout_min =
+						m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "bec_group_freeze_timeout_max"))
+		dom_cfg->bc_engine.bec_group_freeze_timeout_max =
+						m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "bec_group_freeze_timeout_limit"))
+		dom_cfg->bc_engine.bec_group_freeze_timeout_limit =
+						m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "lc_full_threshold"))
+		dom_cfg->bc_log.lc_full_threshold = m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "bpdc_seg_io_nr"))
+		dom_cfg->bc_pd_cfg.bpdc_seg_io_nr = m0_strtou32(str_value, 0, 10);
+	else if (m0_streq(str_key, "ldsc_items_max"))
+		dom_cfg->bc_log_discard_cfg.ldsc_items_max = m0_strtou32(str_value,
+								     0, 10);
+	else if (m0_streq(str_key, "ldsc_items_threshold"))
+		dom_cfg->bc_log_discard_cfg.ldsc_items_threshold =
+						m0_strtou32(str_value, 0, 10);
+	else if (m0_streq(str_key, "ldsc_sync_timeout"))
+		dom_cfg->bc_log_discard_cfg.ldsc_sync_timeout =
+						m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "tbc_workers_nr"))
+		tb_cfg->tbc_workers_nr = m0_strtou64(str_value, 0, 10);
+	else if (m0_streq(str_key, "tbc_work_items_per_tx_max"))
+		tb_cfg->tbc_work_items_per_tx_max = m0_strtou64(str_value, 0, 10);
+	else
+		value_overridden = false;
+
+	if (value_overridden) {
+		printf("%s = %s\n", str_key, str_value);
+		fflush(stdout);
+	}
+}
+
+static int  override_be_cfg_def_from_yaml(const char               *yaml_file,
+					  struct m0_be_domain_cfg  *dom_cfg,
+					  struct m0_be_tx_bulk_cfg *tb_cfg)
+{
+	FILE *fp;
+	yaml_parser_t parser;
+	yaml_token_t  token;
+	char         *scalar_value;
+	char          key[MAX_KEY_LEN];
+	char          value[MAX_KEY_LEN];
+	int           rc;
+	int           is_key = 0;
+	bool          key_received = false;
+	bool          value_received = false;
+
+	fp = fopen(yaml_file, "r");
+	M0_ASSERT(fp != NULL);
+
+	if (!yaml_parser_initialize(&parser)) {
+		printf("Failed to initialize yaml parser.\n");
+		return -ENOMEM;
+	}
+
+	yaml_parser_set_input_file(&parser, fp);
+
+	printf("Changed following BE defaults:\n");
+
+	do {
+		rc = 0;
+		yaml_parser_scan(&parser, &token);
+		switch (token.type) {
+			case YAML_KEY_TOKEN:
+				is_key = 1;
+				break;
+			case YAML_VALUE_TOKEN:
+				is_key = 0;
+				break;
+			case YAML_SCALAR_TOKEN:
+				scalar_value = (char *)token.data.scalar.value;
+				if (is_key) {
+					strcpy(key, scalar_value);
+					key_received = true;
+				} else {
+					strcpy(value, scalar_value);
+					value_received = true;
+				}
+
+				if (key_received && value_received) {
+					override_be_cfg_defaults(dom_cfg, tb_cfg,
+								 key, value);
+					key_received = false;
+					value_received = false;
+				}
+				break;
+			case YAML_NO_TOKEN:
+				rc = -EINVAL;
+				break;
+			default:
+				break;
+		}
+
+		if (rc != 0) {
+			fclose(fp);
+			printf("Failed to parse %s\n", key);
+			return rc;
+		}
+
+		if (token.type != YAML_STREAM_END_TOKEN)
+			yaml_token_delete(&token);
+
+	} while (token.type != YAML_STREAM_END_TOKEN);
+
+	yaml_token_delete(&token);
+
+	yaml_parser_delete(&parser);
+
+	fclose(fp);
+
+	return 0;
 }
 
 static void *builder_action(struct builder *b, size_t len,
@@ -1823,7 +2306,7 @@ static int ctg_proc(struct scanner *s, struct btype *b,
 		ca->cta_key = kl[i];
 		ca->cta_val = vl[i];
 		ca->cta_ismeta = ismeta;
-		qput(s->s_q, (struct action *)ca);
+		qput(s->s_q[CTG_QUEUE_INDEX], (struct action *)ca);
 	}
 	return 0;
 }
@@ -1836,7 +2319,7 @@ static struct cache_slot *ctg_getslot_insertcred(struct ctg_action *ca,
 	struct cache_slot *slot;
 
 	slot = cache_lookup(&b->b_cache, cas_ctg_fid);
-	if (slot == NULL) {
+	if (1 || slot == NULL) {
 		slot = cache_insert(&b->b_cache, cas_ctg_fid);
 		m0_ctg_create_credit(accum);
 		ca->cta_cid.ci_fid = ca->cta_fid;
@@ -1851,20 +2334,22 @@ static struct cache_slot *ctg_getslot_insertcred(struct ctg_action *ca,
 	return slot;
 }
 
-static int ctg_prep(struct action *act, struct m0_be_tx_credit *cred)
+static int ctg_prep(struct action *act, struct m0_be_tx_credit *accum)
 {
 	struct ctg_action      *ca    = M0_AMB(ca, act, cta_act);
 	struct m0_be_btree      tree  = {};
-	struct m0_be_tx_credit  accum = {};
+	/* struct m0_be_tx_credit  accum = {}; */
 
+	m0_mutex_lock(&b.b_ctglock);
 	ca->cta_slot = ctg_getslot_insertcred(ca, act->a_builder,
-					      &ca->cta_fid, &accum);
-	if (!ca->cta_ismeta)
+					      &ca->cta_fid, accum);
+	/* if (!ca->cta_ismeta) */
 		m0_be_btree_insert_credit(&tree, 1,
 					  ca->cta_key.b_nob,
 					  ca->cta_val.b_nob,
-					  &accum);
-	*cred = accum;
+					  accum);
+	m0_mutex_unlock(&b.b_ctglock);
+	/* *cred = accum; */
 	return 0;
 }
 
@@ -1898,6 +2383,8 @@ static void ctg_act(struct action *act, struct m0_be_tx *tx)
 	struct m0_cas_ctg *cc;
 	int                rc;
 
+	m0_mutex_lock(&b.b_ctglock);
+	b.b_act_queue[CTG_QUEUE_INDEX]++;
 	if (ca->cta_slot->cs_tree == NULL) {
 		rc = m0_ctg_meta_find_ctg(m0_ctg_meta(),
 					  &M0_FID_TINIT('T',
@@ -1908,6 +2395,7 @@ static void ctg_act(struct action *act, struct m0_be_tx *tx)
 			cc = ctg_create_meta(ca, tx);
 		} else if (rc != 0) {
 			M0_LOG(M0_DEBUG, "Btree not found rc=%d", rc);
+			m0_mutex_unlock(&b.b_ctglock);
 			return;
 		}
 		if (cc != NULL) {
@@ -1929,6 +2417,7 @@ static void ctg_act(struct action *act, struct m0_be_tx *tx)
 		} else
 			M0_LOG(M0_DEBUG, "Failed to insert record rc=%d", rc);
 	}
+	m0_mutex_unlock(&b.b_ctglock);
 }
 
 static void ctg_fini(struct action *act)
@@ -2137,8 +2626,10 @@ static int cob_proc(struct scanner *s, struct btype *b,
 		}
 		if ((format_header_verify(ca->coa_val.b_addr,
 					  M0_FORMAT_TYPE_COB_NSREC) == 0) &&
-		    (m0_format_footer_verify(ca->coa_valdata, false) == 0))
-			qput(s->s_q, (struct action *)ca);
+		    (m0_format_footer_verify(ca->coa_valdata, false) == 0)) {
+			ca->coa_act.a_opc = COB_QUEUE_INDEX;
+			qput(s->s_q[0/*COB_QUEUE_INDEX*/], (struct action *)ca);
+		}
 		else {
 			btree_bad_kv_count_update(bb->bli_type, 1);
 			m0_buf_free(&ca->coa_key);
@@ -2154,9 +2645,10 @@ static int cob_proc(struct scanner *s, struct btype *b,
  * @param[in]  act  builder action.
  * @param[out] cred credits allocated for addition and deletion operation.
  */
-static int cob_prep(struct action *act, struct m0_be_tx_credit *cred)
+static int cob_prep(struct action *act, struct m0_be_tx_credit *accum)
 {
-	struct m0_be_tx_credit  accum = {};
+	/* struct m0_be_tx_credit  *accum = cred; */
+	m0_mutex_lock(&b.b_coblock);
 	struct cob_action      *ca = container_of(act, struct cob_action,
 						  coa_act);
 	struct m0_cob_nsrec    *nsrec = ca->coa_val.b_addr;
@@ -2164,13 +2656,14 @@ static int cob_prep(struct action *act, struct m0_be_tx_credit *cred)
 
  	if (m0_fid_validate_cob(&nsrec->cnr_fid)) {
 		m0_fid_convert_cob2adstob(&nsrec->cnr_fid, &stob_id);
-		m0_cc_stob_cr_credit(&stob_id, &accum);
+		m0_cc_stob_cr_credit(&stob_id, accum);
 	}
 	m0_cob_tx_credit(act->a_builder->b_ios_cdom, M0_COB_OP_NAME_ADD,
-			 &accum);
+			 accum);
 	m0_cob_tx_credit(act->a_builder->b_ios_cdom, M0_COB_OP_NAME_DEL,
-			 &accum);
-	*cred = accum;
+			 accum);
+	m0_mutex_unlock(&b.b_coblock);
+	/* *cred = accum; */
 	return 0;
 }
 
@@ -2197,6 +2690,9 @@ static void cob_act(struct action *act, struct m0_be_tx *tx)
 	struct m0_stob_ad_domain *adom;
 	struct m0_be_emap_cursor  it = {};
 	struct m0_uint128         prefix;
+
+	m0_mutex_lock(&b.b_coblock);
+	b.b_act_queue[COB_QUEUE_INDEX]++;
 
 	if (m0_fid_eq(&ca->coa_fid, &ios_ns->bb_backlink.bli_fid))
 		m0_cob_init(act->a_builder->b_ios_cdom, &cob);
@@ -2230,6 +2726,7 @@ static void cob_act(struct action *act, struct m0_be_tx *tx)
 					       bo_u.u_emap.e_rc);
 		}
 	}
+	m0_mutex_unlock(&b.b_coblock);
 }
 
 /**
