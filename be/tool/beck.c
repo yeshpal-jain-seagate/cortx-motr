@@ -102,7 +102,7 @@ struct scanner {
 	struct m0_be_seg    *s_seg;
 	struct m0_thread    s_thread;
 	struct queue	    s_bnode_q;
-	struct queue	    *s_q[MAX_QUEUE];
+	struct queue	    *s_q;
 	/**
 	 * We use the following buffer as a cache to increase read performace.
 	 */
@@ -240,7 +240,7 @@ struct builder {
 	struct m0_stob_domain     *b_ad_dom; /**< stob domain pointer */
 	struct ad_dom_info	 **b_ad_info; /**< ad_domain info array */
 	struct m0_thread           b_thread;
-	struct queue              *b_q[MAX_QUEUE];
+	struct queue              *b_q;
 	struct queue               b_qq;
 	struct m0_be_tx_credit     b_cred;
 	struct cache	           b_cache;
@@ -431,6 +431,7 @@ static struct btype bt[] = {
 
 enum {
 	MAX_GEN    	 =     256,
+	MAX_SCAN_QUEUED	 = 1000000,
 	MAX_QUEUED  	 = 100000,
 	MAX_REC_SIZE     = 64*1024,
 	/**
@@ -506,11 +507,10 @@ int main(int argc, char **argv)
 	bool                   version      = false;
 	bool                   print_gen_id = false;
 	bool                   parse_trace  = false;
-	struct queue           q[MAX_QUEUE] = {};
+	struct queue           q = {};
 	int                    result;
 	uint64_t	       gen_id	    = 0;
 	struct m0_be_tx_credit max;
-	int                    i;
 	FILE                  *fp;
 
 	m0_node_uuid_string_set(NULL);
@@ -634,17 +634,15 @@ int main(int argc, char **argv)
 	 * new segment.
 	 */
 	if (!dry_run) {
-			qinit(&s.s_bnode_q, 1000000);
-		for (i = 0; i < MAX_QUEUE; i++) {
-			qinit(&q[i], MAX_QUEUED);
-			s.s_q[i] = b.b_q[i] = &q[i];
-		}
-		result = builder_init(&b);
-		s.s_seg = b.b_seg;
-		m0_be_engine_tx_size_max(&b.b_dom->bd_engine, &max, NULL);
-		s.s_max_reg_size = max.tc_reg_size;
-		if (result != 0)
-			err(EX_CONFIG, "Cannot initialise builder.");
+			qinit(&s.s_bnode_q, MAX_SCAN_QUEUED);
+			qinit(&q, MAX_QUEUED);
+			s.s_q = b.b_q = &q;
+			result = builder_init(&b);
+			s.s_seg = b.b_seg;
+			m0_be_engine_tx_size_max(&b.b_dom->bd_engine, &max, NULL);
+			s.s_max_reg_size = max.tc_reg_size;
+			if (result != 0)
+				err(EX_CONFIG, "Cannot initialise builder.");
 	}
 	result = M0_THREAD_INIT(&s.s_thread, struct scanner *,
 				scanner_thread_init, &scanner_thread, &s, "scannner");
@@ -660,18 +658,16 @@ int main(int argc, char **argv)
 		warn("Scan failed: %d.", result);
 
 	if (!dry_run) {
-			qput(&s.s_bnode_q, scanner_action(sizeof(struct action),
-							  AO_DONE, NULL));
+		qput(&s.s_bnode_q, scanner_action(sizeof(struct action),
+						  AO_DONE, NULL));
 
-		for (i = 0; i < MAX_QUEUE; i++)
-			qput(&q[i], builder_action(&b, sizeof(struct action), AO_DONE,
-						&done_ops));
+		qput(&q, builder_action(&b, sizeof(struct action), AO_DONE,
+					&done_ops));
 		builder_fini(&b);
 		m0_thread_join(&s.s_thread);
 		m0_thread_fini(&s.s_thread);
 		qfini(&s.s_bnode_q);
-		for (i = 0; i < MAX_QUEUE; i++)
-			qfini(&q[i]);
+		qfini(&q);
 	}
 	fini();
 	if (spath != NULL)
@@ -845,8 +841,7 @@ static int scan(struct scanner *s)
 				lastrecordqueue[i] = b.b_act_queue[i];
 			}
 			printf("  queue depth");
-			for (i = 0; i < 1; i++)
-				printf(" %"PRIu64, s->s_q[i]->q_nr);
+			printf(" %"PRIu64, s->s_q->q_nr);
 		}
 	}
 	printf("\n%25s : %9s %9s %9s %9s\n",
@@ -1254,7 +1249,7 @@ static int emap_proc(struct scanner *s, struct btype *btype,
 		adom = emap_dom_find(&ea->emap_act, &ea->emap_fid, &id);
 		if (adom != NULL) {
 			ea->emap_act.a_opc = EMAP_FIRST_QUEUE_INDEX + id;
-			qput(s->s_q[0]/*id + EMAP_FIRST_QUEUE_INDEX*/, &ea->emap_act);
+			qput(s->s_q/*id + EMAP_FIRST_QUEUE_INDEX*/, &ea->emap_act);
 		}
 	}
 	return ret;
@@ -1584,7 +1579,7 @@ static void builder_work_put(struct m0_be_tx_bulk *tb, struct builder *b)
 	int                            rc;
 
 	do {
-		act = qget(b->b_q[0]);
+		act = qget(b->b_q);
 		if (act->a_opc != AO_DONE) {
 			credit = M0_BE_TX_CREDIT(0, 0);
 			act->a_builder = b;
@@ -1597,6 +1592,7 @@ static void builder_work_put(struct m0_be_tx_bulk *tb, struct builder *b)
 				break;
 		}
 	} while (act->a_opc != AO_DONE);
+	m0_be_tx_bulk_end(tb);
 }
 
 static int builder_thread_init(struct builder *b)
@@ -2306,7 +2302,7 @@ static int ctg_proc(struct scanner *s, struct btype *b,
 		ca->cta_key = kl[i];
 		ca->cta_val = vl[i];
 		ca->cta_ismeta = ismeta;
-		qput(s->s_q[CTG_QUEUE_INDEX], (struct action *)ca);
+		qput(s->s_q, (struct action *)ca);
 	}
 	return 0;
 }
@@ -2628,7 +2624,7 @@ static int cob_proc(struct scanner *s, struct btype *b,
 					  M0_FORMAT_TYPE_COB_NSREC) == 0) &&
 		    (m0_format_footer_verify(ca->coa_valdata, false) == 0)) {
 			ca->coa_act.a_opc = COB_QUEUE_INDEX;
-			qput(s->s_q[0/*COB_QUEUE_INDEX*/], (struct action *)ca);
+			qput(s->s_q, (struct action *)ca);
 		}
 		else {
 			btree_bad_kv_count_update(bb->bli_type, 1);
