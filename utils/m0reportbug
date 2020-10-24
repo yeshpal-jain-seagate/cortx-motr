@@ -735,6 +735,27 @@ addb() {
      done)
 }
 
+addb-files() {
+    echo "addb-files : $IN_DIR"
+    mkdir -p addb_files/$IN_DIR
+
+    for i in $(pgrep s3server) ; do
+        local file_path=$(ls ${IN_DIR}/s3server-*/addb_*/o/100000000000000\:2 2>/dev/null | grep $i)
+        if [ $? -eq 0 ] && [ -f "$file_path" ]; then
+            echo $file_path
+            cat $file_path | _xz > addb_files/$IN_DIR/s3_addb_${i}.xz;
+       fi
+    done
+
+    for file_path in $(find ${IN_DIR}/m0d-*/addb-stobs/o  -name "100000000000000:2" 2>/dev/null); do
+        if [ -f "$file_path" ]; then
+            ios_fid=$(echo $file_path | cut -d '/' -f4 | cut -d '-' -f2)
+            [[ $(hctl status | grep 'ioservice' | grep  $ios_fid  2>/dev/null) ]] &&
+                 cat $file_path | _xz > addb_files/$IN_DIR/m0d_addb__${ios_fid}.xz
+        fi
+    done
+}
+
 systemd_journal() {
     local nr_boots=$(journalctl --list-boot | wc -l)
     if ((nr_boots > NR_BOOTS_MAX)); then
@@ -815,6 +836,9 @@ exit
 ###
 ### Date       Version Description
 ### ---------- ------- ----------------------------------------------------
+### 2020-10-19 0.53    Added addb-files options to collect addb files from
+###                    both server(ioservice) and client(s3server)
+###
 ### 2020-10-05 0.52    Removed halon related things since we are not using
 ###                    it.Removed collection of kernel buffer because we lack
 ###                    of debugfs support.Removed collection of m0traces of
