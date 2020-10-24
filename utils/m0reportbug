@@ -12,13 +12,12 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.
 #
 # For any questions about this software or licensing,
 # please email opensource@seagate.com or cortx-questions@seagate.com.
 #
 
-set -eu
+#set -eu
 # set -x
 export PS4='+ [${FUNCNAME[0]:+${FUNCNAME[0]}:}${LINENO}] '
 
@@ -26,7 +25,7 @@ export PS4='+ [${FUNCNAME[0]:+${FUNCNAME[0]}:}${LINENO}] '
 ### When modifying this script, please increment VERSION and add new
 ### entry to the 'History' section below.
 ### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-VERSION=0.52
+VERSION=0.53
 
 OUT_DATA_DIR=m0reportbug-data
 OUT_CORES_DIR=m0reportbug-cores
@@ -45,6 +44,7 @@ CORE_DIRS=("/var/crash/" "/var/log/crash/") # path from where m0reportbug will c
 RECOVERY_SCRIPT_DIR=/opt/seagate/cortx/motr/libexec    # dir containing recovery traces and scripts
 RECOVERY_LOG_DIR=/var/log/seagate/motr/datarecovery    # dir containing recovery log/logs
 LIVE_CORE_DIR=/var/log/seagate/motr
+ADDB_FILE_DUMP=/var/log/seagate/motr-addb-dump
 
 readonly START_DIR=$PWD
 
@@ -65,6 +65,7 @@ main() {
         ^m0traces
         ^addb # Should go after `m0traces' stage (m0addb2dump creates new
               # m0traces, which we don't want to collect).
+       ^addb-files
         systemd_journal
         sysrq_info
     )
