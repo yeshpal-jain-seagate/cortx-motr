@@ -77,13 +77,19 @@ struct be_ut_queue_result {
 	bool     butr_checked;
 };
 
+struct be_ut_queue_data {
+	void                   *buqd_user;
+	struct m0_be_tx_credit  buqd_credit;
+	m0_bcount_t             buqd_payload_size;
+};
+
 struct be_ut_queue_ctx {
 	struct be_ut_queue_cfg    *butx_cfg;
 	struct m0_be_queue        *butx_bq;
 	/* producer increments and takes butx_data[] with the index returned */
 	struct m0_atomic64         butx_pos;
 	struct m0_atomic64         butx_clock;
-	struct m0_be_queue_data   *butx_data;
+	struct be_ut_queue_data   *butx_data;
 	struct be_ut_queue_result *butx_result;
 };
 
@@ -132,15 +138,15 @@ static struct be_ut_queue_cfg be_ut_queue_tests_cfg[BE_UT_QUEUE_NR] = {
 #undef BE_UT_QUEUE_TEST
 
 static uint64_t be_ut_queue_data_index(struct be_ut_queue_ctx  *ctx,
-                                       struct m0_be_queue_data *data)
+                                       struct be_ut_queue_data *data)
 {
-	return (struct m0_be_queue_data *)data->bbd_user - ctx->butx_data;
+	return (struct be_ut_queue_data *)data->buqd_user - ctx->butx_data;
 }
 
 static void be_ut_queue_try_peek(struct be_ut_queue_thread_param *param,
                                  struct be_ut_queue_ctx          *ctx)
 {
-	struct m0_be_queue_data data;
+	struct be_ut_queue_data data;
 	struct m0_buf         buf;
 	bool                  result;
 
@@ -157,7 +163,7 @@ static void be_ut_queue_try_peek(struct be_ut_queue_thread_param *param,
 
 static void be_ut_queue_thread(void *_param)
 {
-	struct m0_be_queue_data          data;
+	struct be_ut_queue_data          data;
 	struct be_ut_queue_thread_param *param = _param;
 	struct be_ut_queue_ctx          *ctx = param->butqp_ctx;
 	struct m0_be_queue              *bq = ctx->butx_bq;
@@ -210,7 +216,7 @@ static void be_ut_queue_with_cfg(struct be_ut_queue_cfg *test_cfg)
 		.bqc_q_size_max       = test_cfg->butc_q_size_max,
 		.bqc_producers_nr_max = test_cfg->butc_producers,
 		.bqc_consumers_nr_max = test_cfg->butc_consumers,
-		.bqc_item_length      = sizeof(struct m0_be_queue_data),
+		.bqc_item_length      = sizeof(struct be_ut_queue_data),
 	};
 	struct be_ut_queue_ctx          *ctx;
 	struct m0_be_queue              *bq;
@@ -239,12 +245,12 @@ static void be_ut_queue_with_cfg(struct be_ut_queue_cfg *test_cfg)
 	M0_ALLOC_ARR(ctx->butx_result, items_nr);
 	M0_UT_ASSERT(ctx->butx_result != NULL);
 	for (i = 0; i < items_nr; ++i) {
-		ctx->butx_data[i] = (struct m0_be_queue_data){
-			.bbd_user = &ctx->butx_data[i],
-			.bbd_credit =
+		ctx->butx_data[i] = (struct be_ut_queue_data){
+			.buqd_user = &ctx->butx_data[i],
+			.buqd_credit =
 				M0_BE_TX_CREDIT(m0_rnd64(&seed) % 0x100 + 1,
 				                m0_rnd64(&seed) % 0x100 + 1),
-			.bbd_payload_size = m0_rnd64(&seed) % 0x1000 + 1,
+			.buqd_payload_size = m0_rnd64(&seed) % 0x1000 + 1,
 		};
 	}
 	threads_nr = test_cfg->butc_producers + test_cfg->butc_consumers;

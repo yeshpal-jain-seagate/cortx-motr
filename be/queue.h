@@ -51,19 +51,6 @@ struct m0_be_op;
 struct be_queue_wait_op;
 struct m0_buf;
 
-struct m0_be_queue_data {
-	void                   *bbd_user;
-	struct m0_be_tx_credit  bbd_credit;
-	m0_bcount_t             bbd_payload_size;
-	bool                    bbd_done;
-};
-
-#define BEQD_F "(qdata=%p bbd_user=%p bbd_credit="BETXCR_F" " \
-	"bbd_payload_size=%"PRIu64")"
-
-#define BEQD_P(bqd) (bqd), (bqd)->bbd_user, BETXCR_P(&(bqd)->bbd_credit), \
-	(bqd)->bbd_payload_size
-
 struct m0_be_queue_cfg {
 	uint64_t    bqc_q_size_max;
 	uint64_t    bqc_producers_nr_max;
