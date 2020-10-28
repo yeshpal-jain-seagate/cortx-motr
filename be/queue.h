@@ -28,14 +28,16 @@
 /**
  * @defgroup be
  *
- * Further directions
- *
- * - put() multiple items at once
+ * Highlights
  *
  * - queues use lists in this way: items are added at tail and are removed from
  *   the head;
  * - op callbacks are called from under m0_be_queue lock, so they MUST NOT call
  *   m0_be_queue functions for the same bq;
+ *
+ * Further directions
+ *
+ * - put() multiple items at once
  *
  * @{
  */
@@ -58,8 +60,6 @@ struct m0_be_queue_cfg {
 	m0_bcount_t bqc_item_length;
 };
 
-/**
- */
 struct m0_be_queue {
 	struct m0_be_queue_cfg   bq_cfg;
 	struct m0_mutex          bq_lock;
@@ -68,14 +68,24 @@ struct m0_be_queue {
 	struct m0_tl             bq_q;
 	struct m0_tl             bq_q_unused;
 
+	/**
+	 * Pre-allocated array of be_queue_item.
+	 *
+	 * - initially all items are in m0_be_queue::bq_q_unused;
+	 * - when m0_be_queue_put() is called an item is moved to
+	 *   m0_be_queue::bq_q;
+	 * - after m0_be_get() is done the item is moved back;
+	 * - array of pointers to be_queue_item couldn't be used because the
+	 *   structure has a flexible array member at the end.
+	 */
+	char                    *bq_qitems;
+
 	/** bqop_tl, be_queue_item::bqi_link */
 	struct m0_tl             bq_op_put;
 	struct m0_tl             bq_op_put_unused;
 	struct m0_tl             bq_op_get;
 	struct m0_tl             bq_op_get_unused;
 
-	/** Pre-allocated array of qitems. XXX explain */
-	char                    *bq_qitems;
 	/** Is used to wait in m0_be_queue_get() */
 	struct be_queue_wait_op *bq_ops_get;
 	/** Is used to wait in m0_be_queue_put() */
