@@ -167,7 +167,7 @@ enum m0_magic_satchel {
 	/* m0_be_active_record_domain_subsystem::rds_list (be glad blood) */
 	M0_BE_ACT_REC_DOM_SUB_MAGIC = 0x33be91adb100d77,
 
-	/* be_queue_item::bbi_magic (focoids based) */
+	/* be_queue_item::bqi_magic (focoids based) */
 	M0_BE_QUEUE_Q_MAGIC = 0x33f0c01d5ba5ed77,
 
 	/* m0_be_queue::bq_q, m0_be_queue::bq_q_unused (scaffle ecoid) */

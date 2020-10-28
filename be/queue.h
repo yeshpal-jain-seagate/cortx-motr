@@ -77,11 +77,11 @@ struct m0_be_queue {
 	struct m0_be_queue_cfg   bq_cfg;
 	struct m0_mutex          bq_lock;
 
-	/** bqq_tl, be_queue_item::bbi_link */
+	/** bqq_tl, be_queue_item::bqi_link */
 	struct m0_tl             bq_q;
 	struct m0_tl             bq_q_unused;
 
-	/** bqop_tl, be_queue_item::bbi_link */
+	/** bqop_tl, be_queue_item::bqi_link */
 	struct m0_tl             bq_op_put;
 	struct m0_tl             bq_op_put_unused;
 	struct m0_tl             bq_op_get;

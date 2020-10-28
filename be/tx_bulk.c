@@ -52,23 +52,36 @@ enum {
 	BE_TX_BULK_WORKER_MAX = 0x40,
 };
 
+struct be_tx_bulk_item {
+	void                   *bbd_user;
+	struct m0_be_tx_credit  bbd_credit;
+	m0_bcount_t             bbd_payload_size;
+	bool                    bbd_done;
+};
+
+#define BTBI_F "(qdata=%p bbd_user=%p bbd_credit="BETXCR_F" " \
+	"bbd_payload_size=%"PRIu64")"
+
+#define BTBI_P(btbi) (btbi), (btbi)->bbd_user, BETXCR_P(&(btbi)->bbd_credit), \
+	(btbi)->bbd_payload_size
+
 struct be_tx_bulk_worker {
-	struct m0_be_tx          tbw_tx;
-	struct m0_be_tx_bulk    *tbw_tb;
-	struct m0_be_queue_data *tbw_data;
-	uint64_t                 tbw_data_nr;
-	struct m0_sm_ast         tbw_queue_get;
-	struct m0_sm_ast         tbw_init;
-	struct m0_sm_ast         tbw_close;
-	void                    *tbw_user;
-	struct m0_clink          tbw_clink;
-	struct m0_sm_group      *tbw_grp;
-	int                      tbw_rc;
-	struct m0_be_op          tbw_op;
-	bool                     tbw_failed;
-	bool                     tbw_done;
-	uint64_t                 tbw_partition;
-	bool                     tbw_terminate_order;
+	struct m0_be_tx         tbw_tx;
+	struct m0_be_tx_bulk   *tbw_tb;
+	struct be_tx_bulk_item *tbw_data;
+	uint64_t                tbw_data_nr;
+	struct m0_sm_ast        tbw_queue_get;
+	struct m0_sm_ast        tbw_init;
+	struct m0_sm_ast        tbw_close;
+	void                   *tbw_user;
+	struct m0_clink         tbw_clink;
+	struct m0_sm_group     *tbw_grp;
+	int                     tbw_rc;
+	struct m0_be_op         tbw_op;
+	bool                    tbw_failed;
+	bool                    tbw_done;
+	uint64_t                tbw_partition;
+	bool                    tbw_terminate_order;
 };
 
 static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
@@ -111,7 +124,7 @@ M0_INTERNAL int m0_be_tx_bulk_init(struct m0_be_tx_bulk     *tb,
 	/* XXX error handling */
 	M0_ALLOC_ARR(tb->btb_q, tb->btb_cfg.tbc_partitions_nr);
 	M0_ASSERT(tb->btb_q != NULL);
-	tb->btb_cfg.tbc_q_cfg.bqc_item_length = sizeof(struct m0_be_queue_data);
+	tb->btb_cfg.tbc_q_cfg.bqc_item_length = sizeof(struct be_tx_bulk_item);
 	for (i = 0; i < tb_cfg->tbc_partitions_nr; ++i) {
 		rc = m0_be_queue_init(&tb->btb_q[i], &tb->btb_cfg.tbc_q_cfg);
 		if (rc != 0)
@@ -199,14 +212,14 @@ static void be_tx_bulk_workers_terminate(struct m0_be_tx_bulk     *tb,
                                          struct be_tx_bulk_worker *worker,
                                          bool                      terminated)
 {
-	struct m0_be_queue_data data = { .bbd_done = true };
-	uint32_t                terminate_partition = UINT32_MAX;
-	uint32_t                not_done = UINT32_MAX;
-	uint32_t                done_nr = 0;
-	uint32_t                i;
-	bool                    done;
-	bool                    terminate_next = false;
-	int                     rc;
+	struct be_tx_bulk_item data = { .bbd_done = true };
+	uint32_t               terminate_partition = UINT32_MAX;
+	uint32_t               not_done = UINT32_MAX;
+	uint32_t               done_nr = 0;
+	uint32_t               i;
+	bool                   done;
+	bool                   terminate_next = false;
+	int                    rc;
 
 	M0_ENTRY("tb=%p worker=%p terminated=%d", tb, worker, !!terminated);
 	be_tx_bulk_lock(tb);
@@ -259,7 +272,7 @@ static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
 				    struct m0_sm_ast   *ast)
 {
 	struct be_tx_bulk_worker *worker = ast->sa_datum;
-	struct m0_be_queue_data   data;
+	struct be_tx_bulk_item    data;
 	struct m0_be_tx_bulk     *tb = worker->tbw_tb;
 	struct m0_be_queue       *bq = &tb->btb_q[worker->tbw_partition];
 	bool                      drain_the_queue;
@@ -337,7 +350,7 @@ static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
 {
 	struct be_tx_bulk_worker *worker = ast->sa_datum;
 	struct m0_be_tx_credit    accum_credit;
-	struct m0_be_queue_data  *data;
+	struct be_tx_bulk_item   *data;
 	struct m0_be_tx_bulk     *tb = worker->tbw_tb;
 	struct m0_be_queue       *bq = &tb->btb_q[worker->tbw_partition];
 	m0_bcount_t               accum_payload_size = 0;
@@ -480,7 +493,7 @@ M0_INTERNAL bool m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
                                    uint64_t                partition,
                                    void                   *user)
 {
-	struct m0_be_queue_data data = {
+	struct be_tx_bulk_item  data = {
 		.bbd_user         = user,
 		.bbd_credit       = *credit,
 		.bbd_payload_size = payload_credit,
