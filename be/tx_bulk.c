@@ -56,7 +56,6 @@ struct be_tx_bulk_item {
 	void                   *bbd_user;
 	struct m0_be_tx_credit  bbd_credit;
 	m0_bcount_t             bbd_payload_size;
-	bool                    bbd_done;
 };
 
 #define BTBI_F "(qdata=%p bbd_user=%p bbd_credit="BETXCR_F" " \
@@ -70,9 +69,11 @@ struct be_tx_bulk_worker {
 	struct m0_be_tx_bulk   *tbw_tb;
 	struct be_tx_bulk_item *tbw_item;
 	uint64_t                tbw_items_nr;
+	bool                    tbw_queue_get_successful;
 	struct m0_sm_ast        tbw_queue_get;
 	struct m0_sm_ast        tbw_init;
 	struct m0_sm_ast        tbw_close;
+	struct m0_sm_ast        tbw_finish;
 	void                   *tbw_user;
 	struct m0_clink         tbw_clink;
 	struct m0_sm_group     *tbw_grp;
@@ -84,6 +85,8 @@ struct be_tx_bulk_worker {
 	bool                    tbw_terminate_order;
 };
 
+static void be_tx_bulk_finish_cb(struct m0_sm_group *grp,
+				 struct m0_sm_ast   *ast);
 static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
 				    struct m0_sm_ast   *ast);
 static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast);
@@ -111,7 +114,6 @@ M0_INTERNAL int m0_be_tx_bulk_init(struct m0_be_tx_bulk     *tb,
 
 	tb->btb_cfg = *tb_cfg;
 	tb->btb_tx_open_failed = false;
-	tb->btb_the_end = false;
 	tb->btb_done = false;
 	tb->btb_termination_in_progress = false;
 	m0_mutex_init(&tb->btb_lock);
@@ -147,27 +149,31 @@ M0_INTERNAL int m0_be_tx_bulk_init(struct m0_be_tx_bulk     *tb,
 		 */
 		worker_locality  = worker_partition % localities_nr;
 		*worker = (struct be_tx_bulk_worker){
-			.tbw_tb              = tb,
-			.tbw_items_nr        = 0,
-			.tbw_grp             =
+			.tbw_tb                   = tb,
+			.tbw_items_nr             = 0,
+			.tbw_queue_get_successful = false,
+			.tbw_grp                  =
 				m0_locality_get(worker_locality)->lo_grp,
-			.tbw_rc              = 0,
-			.tbw_queue_get       = {
+			.tbw_rc                   = 0,
+			.tbw_queue_get            = {
 				.sa_cb    = &be_tx_bulk_queue_get_cb,
 				.sa_datum = worker,
 			},
-			.tbw_init            = {
+			.tbw_init                 = {
 				.sa_cb    = &be_tx_bulk_init_cb,
 				.sa_datum = worker,
 			},
-			.tbw_close           = {
+			.tbw_close                = {
 				.sa_cb    = &be_tx_bulk_close_cb,
 				.sa_datum = worker,
 			},
-			.tbw_failed          = false,
-			.tbw_done            = false,
-			.tbw_partition       = worker_partition,
-			.tbw_terminate_order = false,
+			.tbw_finish               = {
+				.sa_cb    = &be_tx_bulk_finish_cb,
+				.sa_datum = worker,
+			},
+			.tbw_failed               = false,
+			.tbw_done                 = false,
+			.tbw_partition            = worker_partition,
 		};
 		m0_be_op_init(&worker->tbw_op);
 		m0_be_op_callback_set(&worker->tbw_op,
@@ -208,62 +214,52 @@ static void be_tx_bulk_unlock(struct m0_be_tx_bulk *tb)
 	m0_mutex_unlock(&tb->btb_lock);
 }
 
-static void be_tx_bulk_workers_terminate(struct m0_be_tx_bulk     *tb,
-                                         struct be_tx_bulk_worker *worker,
-                                         bool                      terminated)
-{
-	struct be_tx_bulk_item data = { .bbd_done = true };
-	uint32_t               terminate_partition = UINT32_MAX;
-	uint32_t               not_done = UINT32_MAX;
-	uint32_t               done_nr = 0;
-	uint32_t               i;
-	bool                   done;
-	bool                   terminate_next = false;
-	int                    rc;
 
-	M0_ENTRY("tb=%p worker=%p terminated=%d", tb, worker, !!terminated);
-	be_tx_bulk_lock(tb);
-	if (worker != NULL)
-		worker->tbw_done = true;
-	for (i = 0; i < tb->btb_cfg.tbc_workers_nr; ++i) {
-		done_nr += tb->btb_worker[i].tbw_done;
-		if (!tb->btb_worker[i].tbw_done)
-			not_done = i;
+static void be_tx_bulk_queues_drain(struct m0_be_tx_bulk *tb)
+{
+	struct be_tx_bulk_item data;
+	uint64_t               i;
+	bool                   successful;
+
+	for (i = 0; i < tb->btb_cfg.tbc_partitions_nr; ++i) {
+		m0_be_queue_lock(&tb->btb_q[i]);
+		while (M0_BE_QUEUE_PEEK(&tb->btb_q[i], &data)) {
+			M0_BE_OP_SYNC(op,
+			              M0_BE_QUEUE_GET(&tb->btb_q[i], &op, &data,
+			                              &successful));
+			M0_ASSERT(successful);
+		}
+		m0_be_queue_unlock(&tb->btb_q[i]);
 	}
+}
+
+static void be_tx_bulk_finish_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
+{
+	struct be_tx_bulk_worker *worker = ast->sa_datum;
+	struct m0_be_tx_bulk     *tb = worker->tbw_tb;
+	uint32_t                  done_nr = 0;
+	uint32_t                  i;
+	bool                      done;
+
+	M0_ENTRY("tb=%p worker=%p", tb, worker);
+	M0_PRE(ast == &worker->tbw_finish);
+
+	worker->tbw_done = true;
+	be_tx_bulk_lock(tb);
+	for (i = 0; i < tb->btb_cfg.tbc_workers_nr; ++i)
+		done_nr += tb->btb_worker[i].tbw_done;
 	M0_LOG(M0_DEBUG, "done_nr=%"PRIu32, done_nr);
 	done = done_nr == tb->btb_cfg.tbc_workers_nr;
 	if (done) {
 		tb->btb_rc = 0;
-		for (i = 0; i < tb->btb_cfg.tbc_workers_nr; ++i) {
-			rc = tb->btb_worker[i].tbw_rc;
-			if (rc != 0) {
-				tb->btb_rc = rc;
-				break;
-			}
-		}
+		for (i = 0; i < tb->btb_cfg.tbc_workers_nr; ++i)
+			tb->btb_rc = tb->btb_worker[i].tbw_rc ?: tb->btb_rc;
 		tb->btb_done = true;
-	} else {
-		if (terminated)
-			tb->btb_termination_in_progress = false;
-		if (!tb->btb_termination_in_progress) {
-			terminate_next = true;
-			M0_ASSERT(not_done < tb->btb_cfg.tbc_workers_nr);
-			terminate_partition =
-				tb->btb_worker[not_done].tbw_partition;
-			tb->btb_termination_in_progress = true;
-		}
 	}
 	be_tx_bulk_unlock(tb);
-	if (done)
+	if (done) {
+		be_tx_bulk_queues_drain(tb);
 		m0_be_op_done(tb->btb_op);
-	if (terminate_next) {
-		M0_LOG(M0_DEBUG, "terminate next");
-		M0_ASSERT(terminate_partition < tb->btb_cfg.tbc_partitions_nr);
-		m0_be_op_reset(&tb->btb_kill_put_op);
-		m0_be_queue_lock(&tb->btb_q[terminate_partition]);
-		M0_BE_QUEUE_PUT(&tb->btb_q[terminate_partition],
-			      &tb->btb_kill_put_op, &data);
-		m0_be_queue_unlock(&tb->btb_q[terminate_partition]);
 	}
 	M0_LEAVE();
 }
@@ -272,40 +268,28 @@ static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
 				    struct m0_sm_ast   *ast)
 {
 	struct be_tx_bulk_worker *worker = ast->sa_datum;
-	struct be_tx_bulk_item    data;
 	struct m0_be_tx_bulk     *tb = worker->tbw_tb;
 	struct m0_be_queue       *bq = &tb->btb_q[worker->tbw_partition];
-	bool                      drain_the_queue;
 
 	M0_ENTRY("worker=%p", worker);
 	M0_PRE(ast == &worker->tbw_queue_get);
 	M0_PRE(worker->tbw_items_nr == 0);
+	M0_PRE(ergo(worker->tbw_rc != 0, tb->btb_tx_open_failed));
 
-	if (worker->tbw_rc != 0 || worker->tbw_terminate_order) {
+	if (worker->tbw_rc != 0) {
 		/* @see be_tx_bulk_open_cb() */
-		if (worker->tbw_rc != 0)
-			m0_be_tx_fini(&worker->tbw_tx);
-		be_tx_bulk_lock(tb);
-		drain_the_queue = tb->btb_tx_open_failed;
-		be_tx_bulk_unlock(tb);
-		if (drain_the_queue) {
-			m0_be_queue_lock(bq);
-			while (M0_BE_QUEUE_PEEK(bq, &data)) {
-				M0_BE_OP_SYNC(op,
-					      M0_BE_QUEUE_GET(bq, &op, &data));
-			}
-			m0_be_queue_unlock(bq);
-		}
-		be_tx_bulk_workers_terminate(tb, worker,
-		                             worker->tbw_terminate_order);
-		/* nothing must be done here */
+		m0_be_tx_fini(&worker->tbw_tx);
+	}
+	if (tb->btb_tx_open_failed) {
+		m0_sm_ast_post(worker->tbw_grp, &worker->tbw_finish);
 	} else {
 		m0_be_op_reset(&worker->tbw_op);
 		m0_be_queue_lock(bq);
-		M0_BE_QUEUE_GET(bq, &worker->tbw_op, &worker->tbw_item[0]);
+		M0_BE_QUEUE_GET(bq, &worker->tbw_op, &worker->tbw_item[0],
+		                &worker->tbw_queue_get_successful);
 		m0_be_queue_unlock(bq);
-		M0_LEAVE("worker=%p", worker);
 	}
+	M0_LEAVE("worker=%p tbw_rc=%d", worker, worker->tbw_rc);
 }
 
 static void be_tx_bulk_queue_get_done_cb(struct m0_be_op *op, void *param)
@@ -313,15 +297,13 @@ static void be_tx_bulk_queue_get_done_cb(struct m0_be_op *op, void *param)
 	struct be_tx_bulk_worker *worker = param;
 
 	M0_ENTRY("worker=%p", worker);
-	M0_PRE(!worker->tbw_terminate_order);
 
-	worker->tbw_items_nr = 1;
-	if (worker->tbw_item[0].bbd_done) {
-		worker->tbw_terminate_order = true;
-		worker->tbw_items_nr = 0;
+	if (worker->tbw_queue_get_successful) {
+		worker->tbw_items_nr = 1;
+		m0_sm_ast_post(worker->tbw_grp, &worker->tbw_init);
+	} else {
+		m0_sm_ast_post(worker->tbw_grp, &worker->tbw_finish);
 	}
-	m0_sm_ast_post(worker->tbw_grp, worker->tbw_terminate_order ?
-	               &worker->tbw_queue_get : &worker->tbw_init);
 }
 
 static void be_tx_bulk_open(struct be_tx_bulk_worker *worker,
@@ -354,6 +336,7 @@ static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
 	struct m0_be_tx_bulk     *tb = worker->tbw_tb;
 	struct m0_be_queue       *bq = &tb->btb_q[worker->tbw_partition];
 	m0_bcount_t               accum_payload_size = 0;
+	bool                      successful;
 
 	M0_PRE(ast == &worker->tbw_init);
 
@@ -362,27 +345,22 @@ static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
 
 	accum_credit       = worker->tbw_item[0].bbd_credit;
 	accum_payload_size = worker->tbw_item[0].bbd_payload_size;
-	/*
-	 * Try to get more items from the queue without blocking.
-	 * Don't even try to acquire the lock if it's one work item per tx
-	 * configuration.
-	 */
-	if (!worker->tbw_terminate_order &&
-	    tb->btb_cfg.tbc_work_items_per_tx_max > 1) {
-		/* XXX check payload also */
+	/* optimisation: don't take the lock when per tx limit is only 1 item */
+	if (tb->btb_cfg.tbc_work_items_per_tx_max > 1) {
 		m0_be_queue_lock(bq);
 		while (worker->tbw_items_nr <
 		       tb->btb_cfg.tbc_work_items_per_tx_max) {
 			data = &worker->tbw_item[worker->tbw_items_nr];
 			if (!M0_BE_QUEUE_PEEK(bq, data))
 				break;
-			if (data->bbd_done)
-				break;
+			/* XXX check payload also */
 			if (m0_be_should_break(&tb->btb_cfg.tbc_dom->bd_engine,
 					       &accum_credit,
 					       &data->bbd_credit))
 				break;
-			M0_BE_OP_SYNC(op, M0_BE_QUEUE_GET(bq, &op, data));
+			M0_BE_OP_SYNC(op, M0_BE_QUEUE_GET(bq, &op, data,
+							  &successful));
+			M0_ASSERT(successful);
 			m0_be_tx_credit_add(&accum_credit, &data->bbd_credit);
 			accum_payload_size += data->bbd_payload_size;
 			++worker->tbw_items_nr;
@@ -398,7 +376,6 @@ static bool be_tx_bulk_open_cb(struct m0_clink *clink)
 	struct be_tx_bulk_worker *worker;
 	struct m0_be_tx_bulk     *tb;
 	struct m0_be_tx          *tx;
-	bool                      killing_has_started;
 
 	worker = container_of(clink, struct be_tx_bulk_worker, tbw_clink);
 	M0_ENTRY("worker=%p", worker);
@@ -412,22 +389,17 @@ static bool be_tx_bulk_open_cb(struct m0_clink *clink)
 			m0_sm_ast_post(worker->tbw_grp, &worker->tbw_close);
 		} else {
 			be_tx_bulk_lock(tb);
-			killing_has_started =
-				tb->btb_the_end || tb->btb_tx_open_failed;
 			tb->btb_tx_open_failed = true;
 			be_tx_bulk_unlock(tb);
-			if (!killing_has_started) {
-				worker->tbw_terminate_order = true;
-				worker->tbw_items_nr = 0; /* XXX add a warning*/
-			}
 			worker->tbw_rc = tx->t_sm.sm_rc;
 			M0_LOG(M0_ERROR, "tx=%p rc=%d", tx, worker->tbw_rc);
+			be_tx_bulk_queues_drain(tb);
 			/*
 			 * Can't call m0_be_tx_fini(tx) here because
 			 * m0_be_tx_put() for M0_BTS_FAILED transaction
 			 * is called after worker transition.
 			 *
-			 * be_tx_bulk_init_cb() will do this.
+			 * be_tx_bulk_queue_get_cb() will do this.
 			 */
 			be_tx_bulk_gc_cb(tx, worker);
 		}
@@ -497,42 +469,41 @@ M0_INTERNAL bool m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
 		.bbd_user         = user,
 		.bbd_credit       = *credit,
 		.bbd_payload_size = payload_credit,
-		.bbd_done         = false,
 	};
 	bool                    put_fail;
+	bool                    done;
 
 	M0_PRE(partition < tb->btb_cfg.tbc_partitions_nr);
 
 	be_tx_bulk_lock(tb);
-	M0_ASSERT(!tb->btb_the_end);
 	put_fail = tb->btb_tx_open_failed;
+	done     = tb->btb_done;
 	be_tx_bulk_unlock(tb);
+	M0_ASSERT(!done);
 
 	if (put_fail)
 		return false;
-
-	M0_PRE(!tb->btb_the_end);
 
 	m0_be_queue_lock(&tb->btb_q[partition]);
 	M0_BE_QUEUE_PUT(&tb->btb_q[partition], op, &data);
 	m0_be_queue_unlock(&tb->btb_q[partition]);
 
-	M0_POST(!tb->btb_the_end);   /* not taking the lock is intentional */
+	be_tx_bulk_lock(tb);
+	done = tb->btb_done;
+	be_tx_bulk_unlock(tb);
+	M0_ASSERT(!done);
 	return true;
 }
 
 M0_INTERNAL void m0_be_tx_bulk_end(struct m0_be_tx_bulk *tb)
 {
-	bool tx_open_failed;
+	uint64_t i;
 
-	be_tx_bulk_lock(tb);
-	M0_ASSERT(!tb->btb_the_end);
-	tb->btb_the_end = true;
-	tx_open_failed = tb->btb_tx_open_failed;
-	be_tx_bulk_unlock(tb);
-
-	if (!tx_open_failed)
-		be_tx_bulk_workers_terminate(tb, NULL, false);
+	for (i = 0; i < tb->btb_cfg.tbc_partitions_nr; ++i) {
+		m0_be_queue_lock(&tb->btb_q[i]);
+		m0_be_queue_end(&tb->btb_q[i]);
+		m0_be_queue_unlock(&tb->btb_q[i]);
+	}
 }
 
 M0_INTERNAL int m0_be_tx_bulk_status(struct m0_be_tx_bulk *tb)

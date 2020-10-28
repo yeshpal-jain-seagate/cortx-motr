@@ -40,8 +40,7 @@
  * @see m0_be_ut_tx_bulk_usecase() for an example.
  *
  * Future directions
- * - allow multiple operations in a single transaction
- * - use m0_fom for tx state change or user operation wait
+ * - use m0_fom instead of asts
  * - use m0_module for init()/fini()
  * - support multiple partitions per worker
  *
@@ -90,7 +89,6 @@ struct m0_be_tx_bulk {
 	struct m0_mutex           btb_lock;
 	uint32_t                  btb_done_nr;
 	bool                      btb_tx_open_failed;
-	bool                      btb_the_end;
 	bool                      btb_done;
 	bool                      btb_termination_in_progress;
 	struct m0_be_op          *btb_op;

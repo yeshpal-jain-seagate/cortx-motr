@@ -36,6 +36,7 @@
 #include "lib/errno.h"          /* ENOMEM */
 #include "lib/memory.h"         /* M0_ALLOC_ARR */
 #include "lib/buf.h"            /* m0_buf_memcpy */
+#include "lib/misc.h"           /* ergo */
 
 #include "be/op.h"              /* m0_be_op_active */
 
@@ -54,6 +55,7 @@ struct be_queue_wait_op {
 	struct m0_be_op      *bbo_op;
 	struct be_queue_item *bbo_bqi;
 	struct m0_buf         bbo_data;
+	bool                 *bbo_successful;
 	uint64_t              bbo_magic;
 	struct m0_tlink       bbo_link;
 };
@@ -83,6 +85,13 @@ static struct be_queue_item *be_queue_qitem(struct m0_be_queue *bq,
 		 (sizeof(struct be_queue_item) + bq->bq_cfg.bqc_item_length));
 }
 
+static bool be_queue_invariant(struct m0_be_queue *bq)
+{
+	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
+
+	return bq->bq_enqueued >= bq->bq_dequeued;
+}
+
 M0_INTERNAL int m0_be_queue_init(struct m0_be_queue     *bq,
                                  struct m0_be_queue_cfg *cfg)
 {
@@ -100,6 +109,7 @@ M0_INTERNAL int m0_be_queue_init(struct m0_be_queue     *bq,
 	M0_PRE(M0_IS_8ALIGNED(cfg->bqc_item_length));
 
 	bq->bq_cfg = *cfg;
+	bq->bq_the_end = false;
 	bq->bq_enqueued = 0;
 	bq->bq_dequeued = 0;
 	M0_ALLOC_ARR(bq->bq_qitems, be_queue_qitems_nr(bq) *
@@ -228,7 +238,9 @@ static void be_queue_q_peek(struct m0_be_queue *bq, struct m0_buf *data)
 	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
 }
 
-static void be_queue_q_get(struct m0_be_queue *bq, struct m0_buf *data)
+static void be_queue_q_get(struct m0_be_queue *bq,
+			   struct m0_buf      *data,
+                           bool               *successful)
 {
 	struct be_queue_item *bqi;
 
@@ -237,6 +249,7 @@ static void be_queue_q_get(struct m0_be_queue *bq, struct m0_buf *data)
 
 	bqi = bqq_tlist_head(&bq->bq_q);
 	m0_buf_memcpy(data, &BE_QUEUE_ITEM2BUF(bq, bqi));
+	*successful = true;
 	bqq_tlist_move(&bq->bq_q_unused, bqi);
 	++bq->bq_dequeued;
 	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
@@ -277,8 +290,9 @@ static bool be_queue_op_put_is_waiting(struct m0_be_queue *bq)
 }
 
 static void be_queue_op_get(struct m0_be_queue *bq,
-                          struct m0_be_op  *op,
-                          struct m0_buf    *data)
+                            struct m0_be_op    *op,
+                            struct m0_buf      *data,
+                            bool               *successful)
 {
 	struct be_queue_wait_op *bwo;
 
@@ -286,21 +300,27 @@ static void be_queue_op_get(struct m0_be_queue *bq,
 	M0_PRE(!bqop_tlist_is_empty(&bq->bq_op_get_unused));
 
 	bwo = bqop_tlist_head(&bq->bq_op_get_unused);
-	bwo->bbo_data = *data;
-	bwo->bbo_op   = op;
+	bwo->bbo_data       = *data;
+	bwo->bbo_successful = successful;
+	bwo->bbo_op         = op;
 	bqop_tlist_move_tail(&bq->bq_op_get, bwo);
 	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
 }
 
-static void be_queue_op_get_done(struct m0_be_queue *bq)
+static void be_queue_op_get_done(struct m0_be_queue *bq, bool success)
 {
 	struct be_queue_wait_op *bwo;
 
+	M0_ENTRY("bq="BEQ_F" success=%d", BEQ_P(bq), !!success);
 	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
 	M0_PRE(!bqop_tlist_is_empty(&bq->bq_op_get));
 
 	bwo = bqop_tlist_head(&bq->bq_op_get);
-	be_queue_q_get(bq, &bwo->bbo_data);
+	if (success) {
+		be_queue_q_get(bq, &bwo->bbo_data, bwo->bbo_successful);
+	} else {
+		bwo->bbo_successful = false;
+	}
 	m0_be_op_done(bwo->bbo_op);
 	bqop_tlist_move(&bq->bq_op_get_unused, bwo);
 	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
@@ -316,10 +336,12 @@ M0_INTERNAL void m0_be_queue_put(struct m0_be_queue *bq,
                                  struct m0_buf      *data)
 {
 	struct be_queue_item *bqi;
-	bool                was_full;
+	bool                  was_full;
 
 	M0_ENTRY("bq="BEQ_F, BEQ_P(bq));
 	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
+	M0_PRE(be_queue_invariant(bq));
+	M0_PRE(!bq->bq_the_end);
 
 	m0_be_op_active(op);
 	was_full = be_queue_is_full(bq);
@@ -335,24 +357,50 @@ M0_INTERNAL void m0_be_queue_put(struct m0_be_queue *bq,
 	 * to the queue.
 	 */
 	if (be_queue_op_get_is_waiting(bq))
-		be_queue_op_get_done(bq);
+		be_queue_op_get_done(bq, true);
+
+	M0_POST(be_queue_invariant(bq));
+}
+
+M0_INTERNAL void m0_be_queue_end(struct m0_be_queue *bq)
+{
+	M0_ENTRY("bq="BEQ_F, BEQ_P(bq));
+	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
+	M0_PRE(be_queue_invariant(bq));
+	M0_PRE(!bq->bq_the_end);
+	M0_PRE(ergo(be_queue_op_get_is_waiting(bq), be_queue_is_empty(bq)));
+
+	bq->bq_the_end = true;
+	while (be_queue_op_get_is_waiting(bq))
+		be_queue_op_get_done(bq, false);
+	M0_POST(be_queue_invariant(bq));
+	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
 }
 
 M0_INTERNAL void m0_be_queue_get(struct m0_be_queue *bq,
                                  struct m0_be_op    *op,
-                                 struct m0_buf      *data)
+                                 struct m0_buf      *data,
+                                 bool               *successful)
 {
 	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
+	M0_PRE(be_queue_invariant(bq));
 
+	M0_ENTRY("bq="BEQ_F, BEQ_P(bq));
 	m0_be_op_active(op);
-	if (be_queue_is_empty(bq) || be_queue_op_get_is_waiting(bq)) {
-		be_queue_op_get(bq, op, data);
+	if (be_queue_is_empty(bq) && bq->bq_the_end) {
+		*successful = false;
+		m0_be_op_done(op);
 		return;
 	}
-	be_queue_q_get(bq, data);
+	if (be_queue_is_empty(bq) || be_queue_op_get_is_waiting(bq)) {
+		be_queue_op_get(bq, op, data, successful);
+		return;
+	}
+	be_queue_q_get(bq, data, successful);
 	m0_be_op_done(op);
 	if (be_queue_op_put_is_waiting(bq))
 		be_queue_op_put_done(bq);
+	M0_POST(be_queue_invariant(bq));
 	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
 }
 
@@ -360,6 +408,7 @@ M0_INTERNAL bool m0_be_queue_peek(struct m0_be_queue *bq,
                                   struct m0_buf      *data)
 {
 	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
+	M0_PRE(be_queue_invariant(bq));
 
 	if (be_queue_is_empty(bq) ||
 	    be_queue_op_get_is_waiting(bq)) {
@@ -367,6 +416,7 @@ M0_INTERNAL bool m0_be_queue_peek(struct m0_be_queue *bq,
 		return false;
 	}
 	be_queue_q_peek(bq, data);
+	M0_POST(be_queue_invariant(bq));
 	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
 	return true;
 }

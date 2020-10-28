@@ -111,6 +111,8 @@ struct be_ut_queue_thread_param {
 	/* just for debugging purposes */
 	uint64_t                butqp_peeks_successful;
 	uint64_t                butqp_peeks_unsuccessful;
+	uint64_t                butqp_gets_successful;
+	uint64_t                butqp_gets_unsuccessful;
 };
 
 #define BE_UT_QUEUE_TEST(q_size_max, producers, consumers, items_nr)    \
@@ -171,12 +173,14 @@ static void be_ut_queue_thread(void *_param)
 	uint64_t                         i;
 	uint64_t                         index;
 	uint64_t                         before;
+	bool                             successful;
 
 	M0_ALLOC_PTR(op);
 	M0_UT_ASSERT(op != NULL);
 	m0_be_op_init(op);
 	m0_semaphore_down(&param->butqp_sem_start);
 	for (i = 0; i < param->butqp_items_nr; ++i) {
+		m0_be_op_reset(op);
 		if (param->butqp_is_producer) {
 			before = m0_atomic64_add_return(&ctx->butx_clock, 1);
 			m0_be_queue_lock(bq);
@@ -188,13 +192,26 @@ static void be_ut_queue_thread(void *_param)
 			ctx->butx_result[index].butr_put_before = before;
 			ctx->butx_result[index].butr_put_after =
 				m0_atomic64_add_return(&ctx->butx_clock, 1);
+			if (index == ctx->butx_cfg->butc_items_nr - 1) {
+				m0_be_queue_lock(bq);
+				m0_be_queue_end(bq);
+				m0_be_queue_unlock(bq);
+			}
 		} else {
+			M0_SET0(&data);
+			successful = false;
 			before = m0_atomic64_add_return(&ctx->butx_clock, 1);
 			m0_be_queue_lock(bq);
-			M0_BE_QUEUE_GET(bq, op, &data);
+			M0_BE_QUEUE_GET(bq, op, &data, &successful);
 			be_ut_queue_try_peek(param, ctx);
 			m0_be_queue_unlock(bq);
 			m0_be_op_wait(op);
+			if (!successful) {
+				++param->butqp_gets_unsuccessful;
+				continue;
+			}
+			M0_ASSERT(param->butqp_gets_unsuccessful == 0);
+			++param->butqp_gets_successful;
 			index = be_ut_queue_data_index(ctx, &data);
 			M0_UT_ASSERT(!ctx->butx_result[index].butr_checked);
 			ctx->butx_result[index].butr_checked = true;
@@ -202,7 +219,6 @@ static void be_ut_queue_thread(void *_param)
 			ctx->butx_result[index].butr_get_after =
 				m0_atomic64_add_return(&ctx->butx_clock, 1);
 		}
-		m0_be_op_reset(op);
 	}
 	m0_be_op_fini(op);
 	m0_free(op);
@@ -210,7 +226,7 @@ static void be_ut_queue_thread(void *_param)
 
 static void be_ut_queue_with_cfg(struct be_ut_queue_cfg *test_cfg)
 {
-	struct m0_ut_threads_descr    *td;
+	struct m0_ut_threads_descr      *td;
 	struct be_ut_queue_thread_param *params;
 	struct m0_be_queue_cfg           bq_cfg = {
 		.bqc_q_size_max       = test_cfg->butc_q_size_max,
@@ -220,20 +236,19 @@ static void be_ut_queue_with_cfg(struct be_ut_queue_cfg *test_cfg)
 	};
 	struct be_ut_queue_ctx          *ctx;
 	struct m0_be_queue              *bq;
-	uint64_t                       threads_nr;
-	uint64_t                       items_nr = test_cfg->butc_items_nr;
-	uint64_t                       i;
-	uint64_t                       seed = test_cfg->butc_seed;
-	uint64_t                       divisor;
-	uint64_t                       remainder;
+	uint64_t                         threads_nr;
+	uint64_t                         items_nr = test_cfg->butc_items_nr;
+	uint64_t                         i;
+	uint64_t                         seed = test_cfg->butc_seed;
+	uint64_t                         divisor;
+	uint64_t                         remainder;
 	struct be_ut_queue_result       *r;
-	int                            rc;
+	int                              rc;
 
 	M0_ALLOC_PTR(bq);
 	M0_ASSERT(bq != NULL);
 	rc = m0_be_queue_init(bq, &bq_cfg);
 	M0_ASSERT_INFO(rc == 0, "rc=%d", rc);
-
 	M0_ALLOC_PTR(ctx);
 	M0_UT_ASSERT(ctx != NULL);
 	ctx->butx_cfg = test_cfg;
@@ -269,13 +284,15 @@ static void be_ut_queue_with_cfg(struct be_ut_queue_cfg *test_cfg)
 		remainder = items_nr % divisor;
 		params[i].butqp_items_nr = items_nr / divisor +
 			(remainder == 0 ?
-			 0 : params[i].butqp_index < remainder);
+			 0 : params[i].butqp_index < remainder) +
+			!params[i].butqp_is_producer;
 	}
 	M0_UT_ASSERT(m0_reduce(j, test_cfg->butc_producers,
 			       0, + params[j].butqp_items_nr) == items_nr);
 	M0_UT_ASSERT(m0_reduce(j, test_cfg->butc_consumers,
 			       0, + params[test_cfg->butc_producers +
-					   j].butqp_items_nr) == items_nr);
+					   j].butqp_items_nr) ==
+		     items_nr + test_cfg->butc_consumers);
 
 	M0_ALLOC_PTR(td);
 	M0_UT_ASSERT(td != NULL);
@@ -291,6 +308,14 @@ static void be_ut_queue_with_cfg(struct be_ut_queue_cfg *test_cfg)
 		m0_semaphore_fini(&params[i].butqp_sem_start);
 
 	r = ctx->butx_result;
+	M0_UT_ASSERT(m0_reduce(j, test_cfg->butc_consumers,
+			       0, + params[test_cfg->butc_producers +
+					   j].butqp_gets_successful) ==
+		     items_nr);
+	M0_UT_ASSERT(m0_reduce(j, test_cfg->butc_consumers,
+			       0, + params[test_cfg->butc_producers +
+					   j].butqp_gets_unsuccessful) ==
+		     test_cfg->butc_consumers);
 	/* that each item is returned by m0_be_queue_get() exactly once */
 	M0_UT_ASSERT(m0_forall(j, items_nr, r[j].butr_checked));
 	/* at least one m0_be_queue_peek() is supposed to fail in each thread */

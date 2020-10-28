@@ -30,10 +30,11 @@
  *
  * Highlights
  *
- * - queues use lists in this way: items are added at tail and are removed from
- *   the head;
+ * - put()/get()/peek()/end() expect queue lock to be taken;
  * - op callbacks are called from under m0_be_queue lock, so they MUST NOT call
  *   m0_be_queue functions for the same bq;
+ * - queues use lists in this way: items are added at tail and are removed from
+ *   the head;
  *
  * Further directions
  *
@@ -91,12 +92,16 @@ struct m0_be_queue {
 	/** Is used to wait in m0_be_queue_put() */
 	struct be_queue_wait_op *bq_ops_put;
 
+	bool                     bq_the_end;
+
 	uint64_t                 bq_enqueued;
 	uint64_t                 bq_dequeued;
 };
 
-#define BEQ_F "(queue=%p bq_enqueued=%"PRIu64" bq_dequeued=%"PRIu64")"
-#define BEQ_P(bq) (bq), (bq)->bq_enqueued, (bq)->bq_dequeued
+#define BEQ_F "(queue=%p bq_enqueued=%"PRIu64" bq_dequeued=%"PRIu64" " \
+	"bq_the_end=%d)"
+#define BEQ_P(bq) (bq), (bq)->bq_enqueued, (bq)->bq_dequeued, \
+	!!((bq)->bq_the_end)
 
 M0_INTERNAL int m0_be_queue_init(struct m0_be_queue     *bq,
                                  struct m0_be_queue_cfg *cfg);
@@ -108,18 +113,21 @@ M0_INTERNAL void m0_be_queue_unlock(struct m0_be_queue *bq);
 M0_INTERNAL void m0_be_queue_put(struct m0_be_queue *bq,
                                  struct m0_be_op    *op,
                                  struct m0_buf      *data);
+/* nothing is going to be added to the queue after this call */
+M0_INTERNAL void m0_be_queue_end(struct m0_be_queue *bq);
 M0_INTERNAL void m0_be_queue_get(struct m0_be_queue *bq,
                                  struct m0_be_op    *op,
-                                 struct m0_buf      *data);
+                                 struct m0_buf      *data,
+                                 bool               *successful);
 M0_INTERNAL bool m0_be_queue_peek(struct m0_be_queue *bq,
                                   struct m0_buf      *data);
 
-#define M0_BE_QUEUE_PUT(bq, op, ptr) \
-				m0_be_queue_put(bq, op, &M0_BUF_INIT_PTR(ptr))
-#define M0_BE_QUEUE_GET(bq, op, ptr) \
-				m0_be_queue_get(bq, op, &M0_BUF_INIT_PTR(ptr))
-#define M0_BE_QUEUE_PEEK(bq, ptr)    \
-				m0_be_queue_peek(bq, &M0_BUF_INIT_PTR(ptr))
+#define M0_BE_QUEUE_PUT(bq, op, ptr)                                           \
+		m0_be_queue_put(bq, op, &M0_BUF_INIT_PTR(ptr))
+#define M0_BE_QUEUE_GET(bq, op, ptr, successful)                               \
+		m0_be_queue_get(bq, op, &M0_BUF_INIT_PTR(ptr), successful)
+#define M0_BE_QUEUE_PEEK(bq, ptr)                                              \
+		m0_be_queue_peek(bq, &M0_BUF_INIT_PTR(ptr))
 
 /** @} end of be group */
 #endif /* __MOTR_BE_QUEUE_H__ */
