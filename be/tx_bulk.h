@@ -63,25 +63,25 @@ struct be_tx_bulk_worker;
  * - it's possible to have more than one tbc_do() call in a single transaction.
  */
 struct m0_be_tx_bulk_cfg {
-	struct m0_be_queue_cfg  tbc_q_cfg;
-	uint64_t              tbc_workers_nr;
-	uint64_t              tbc_partitions_nr;
-	uint64_t              tbc_work_items_per_tx_max;
+	struct m0_be_queue_cfg   tbc_q_cfg;
+	uint64_t                 tbc_workers_nr;
+	uint64_t                 tbc_partitions_nr;
+	uint64_t                 tbc_work_items_per_tx_max;
 	/** BE domain for transactions */
-	struct m0_be_domain  *tbc_dom;
+	struct m0_be_domain     *tbc_dom;
 	/** it's passed as a parameter to m0_be_tx_bulk_cfg::tbc_do() */
-	void                 *tbc_datum;
+	void                    *tbc_datum;
 	/** do some work in the context of a BE transaction */
-	void                (*tbc_do)(struct m0_be_tx_bulk   *tb,
-	                              struct m0_be_tx        *tx,
-	                              struct m0_be_op        *op,
-	                              void                   *datum,
-	                              void                   *user);
+	void                   (*tbc_do)(struct m0_be_tx_bulk *tb,
+	                                 struct m0_be_tx      *tx,
+	                                 struct m0_be_op      *op,
+	                                 void                 *datum,
+	                                 void                 *user);
 };
 
 struct m0_be_tx_bulk {
 	struct m0_be_tx_bulk_cfg  btb_cfg;
-	struct m0_be_queue         *btb_q;
+	struct m0_be_queue       *btb_q;
 	uint32_t                  btb_worker_nr;
 	struct be_tx_bulk_worker *btb_worker;
 	/** @see m0_be_tx_bulk_status */

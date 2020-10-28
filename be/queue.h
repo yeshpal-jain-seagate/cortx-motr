@@ -75,47 +75,47 @@ struct m0_be_queue_cfg {
  */
 struct m0_be_queue {
 	struct m0_be_queue_cfg   bq_cfg;
-	struct m0_mutex        bq_lock;
+	struct m0_mutex          bq_lock;
 
 	/** bqq_tl, be_queue_item::bbi_link */
-	struct m0_tl           bq_q;
-	struct m0_tl           bq_q_unused;
+	struct m0_tl             bq_q;
+	struct m0_tl             bq_q_unused;
 
 	/** bqop_tl, be_queue_item::bbi_link */
-	struct m0_tl           bq_op_put;
-	struct m0_tl           bq_op_put_unused;
-	struct m0_tl           bq_op_get;
-	struct m0_tl           bq_op_get_unused;
+	struct m0_tl             bq_op_put;
+	struct m0_tl             bq_op_put_unused;
+	struct m0_tl             bq_op_get;
+	struct m0_tl             bq_op_get_unused;
 
 	/** Pre-allocated array of qitems. XXX explain */
-	char                  *bq_qitems;
+	char                    *bq_qitems;
 	/** Is used to wait in m0_be_queue_get() */
 	struct be_queue_wait_op *bq_ops_get;
 	/** Is used to wait in m0_be_queue_put() */
 	struct be_queue_wait_op *bq_ops_put;
 
-	uint64_t               bq_enqueued;
-	uint64_t               bq_dequeued;
+	uint64_t                 bq_enqueued;
+	uint64_t                 bq_dequeued;
 };
 
 #define BEQ_F "(queue=%p bq_enqueued=%"PRIu64" bq_dequeued=%"PRIu64")"
 #define BEQ_P(bq) (bq), (bq)->bq_enqueued, (bq)->bq_dequeued
 
 M0_INTERNAL int m0_be_queue_init(struct m0_be_queue     *bq,
-                               struct m0_be_queue_cfg *cfg);
+                                 struct m0_be_queue_cfg *cfg);
 M0_INTERNAL void m0_be_queue_fini(struct m0_be_queue *bq);
 
 M0_INTERNAL void m0_be_queue_lock(struct m0_be_queue *bq);
 M0_INTERNAL void m0_be_queue_unlock(struct m0_be_queue *bq);
 
 M0_INTERNAL void m0_be_queue_put(struct m0_be_queue *bq,
-                               struct m0_be_op  *op,
-                               struct m0_buf    *data);
+                                 struct m0_be_op    *op,
+                                 struct m0_buf      *data);
 M0_INTERNAL void m0_be_queue_get(struct m0_be_queue *bq,
-                               struct m0_be_op  *op,
-                               struct m0_buf    *data);
+                                 struct m0_be_op    *op,
+                                 struct m0_buf      *data);
 M0_INTERNAL bool m0_be_queue_peek(struct m0_be_queue *bq,
-                                struct m0_buf    *data);
+                                  struct m0_buf      *data);
 
 #define M0_BE_QUEUE_PUT(bq, op, ptr) \
 				m0_be_queue_put(bq, op, &M0_BUF_INIT_PTR(ptr))

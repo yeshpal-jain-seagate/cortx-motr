@@ -41,21 +41,21 @@
 
 
 struct be_queue_item {
-	uint64_t              bqi_magic;
+	uint64_t         bqi_magic;
 	/** bqq_tl, m0_be_queue::bq_q */
-	struct m0_tlink       bqi_link;
-	char                 *bqi_data[];
+	struct m0_tlink  bqi_link;
+	char            *bqi_data[];
 };
 
 #define BE_QUEUE_ITEM2BUF(bq, bqi) \
 	M0_BUF_INIT((bq)->bq_cfg.bqc_item_length, &(bqi)->bqi_data)
 
 struct be_queue_wait_op {
-	struct m0_be_op       *bbo_op;
-	struct be_queue_item    *bbo_bqi;
-	struct m0_buf          bbo_data;
-	uint64_t               bbo_magic;
-	struct m0_tlink        bbo_link;
+	struct m0_be_op      *bbo_op;
+	struct be_queue_item *bbo_bqi;
+	struct m0_buf         bbo_data;
+	uint64_t              bbo_magic;
+	struct m0_tlink       bbo_link;
 };
 
 M0_TL_DESCR_DEFINE(bqq, "m0_be_queue::bq_q*[]", static,
@@ -74,7 +74,8 @@ static uint64_t be_queue_qitems_nr(struct m0_be_queue *bq)
 	return bq->bq_cfg.bqc_q_size_max + bq->bq_cfg.bqc_producers_nr_max;
 }
 
-static struct be_queue_item *be_queue_qitem(struct m0_be_queue *bq, uint64_t index)
+static struct be_queue_item *be_queue_qitem(struct m0_be_queue *bq,
+					    uint64_t            index)
 {
 	M0_PRE(index < be_queue_qitems_nr(bq));
 	return (struct be_queue_item *)
@@ -83,7 +84,7 @@ static struct be_queue_item *be_queue_qitem(struct m0_be_queue *bq, uint64_t ind
 }
 
 M0_INTERNAL int m0_be_queue_init(struct m0_be_queue     *bq,
-                               struct m0_be_queue_cfg *cfg)
+                                 struct m0_be_queue_cfg *cfg)
 {
 	uint64_t i;
 
@@ -201,7 +202,7 @@ static bool be_queue_is_full(struct m0_be_queue *bq)
 }
 
 static struct be_queue_item *be_queue_q_put(struct m0_be_queue *bq,
-                                        struct m0_buf    *data)
+                                            struct m0_buf      *data)
 {
 	struct be_queue_item *bqi;
 
@@ -215,8 +216,7 @@ static struct be_queue_item *be_queue_q_put(struct m0_be_queue *bq,
 	return bqi;
 }
 
-static void be_queue_q_peek(struct m0_be_queue *bq,
-                          struct m0_buf    *data)
+static void be_queue_q_peek(struct m0_be_queue *bq, struct m0_buf *data)
 {
 	struct be_queue_item *bqi;
 
@@ -228,8 +228,7 @@ static void be_queue_q_peek(struct m0_be_queue *bq,
 	M0_LEAVE("bq="BEQ_F, BEQ_P(bq));
 }
 
-static void be_queue_q_get(struct m0_be_queue *bq,
-                         struct m0_buf    *data)
+static void be_queue_q_get(struct m0_be_queue *bq, struct m0_buf *data)
 {
 	struct be_queue_item *bqi;
 
@@ -313,8 +312,8 @@ static bool be_queue_op_get_is_waiting(struct m0_be_queue *bq)
 }
 
 M0_INTERNAL void m0_be_queue_put(struct m0_be_queue *bq,
-                               struct m0_be_op  *op,
-                               struct m0_buf    *data)
+                                 struct m0_be_op    *op,
+                                 struct m0_buf      *data)
 {
 	struct be_queue_item *bqi;
 	bool                was_full;
@@ -340,8 +339,8 @@ M0_INTERNAL void m0_be_queue_put(struct m0_be_queue *bq,
 }
 
 M0_INTERNAL void m0_be_queue_get(struct m0_be_queue *bq,
-                               struct m0_be_op  *op,
-                               struct m0_buf    *data)
+                                 struct m0_be_op    *op,
+                                 struct m0_buf      *data)
 {
 	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
 
@@ -358,7 +357,7 @@ M0_INTERNAL void m0_be_queue_get(struct m0_be_queue *bq,
 }
 
 M0_INTERNAL bool m0_be_queue_peek(struct m0_be_queue *bq,
-                                struct m0_buf    *data)
+                                  struct m0_buf      *data)
 {
 	M0_PRE(m0_mutex_is_locked(&bq->bq_lock));
 

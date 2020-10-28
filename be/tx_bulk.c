@@ -53,22 +53,22 @@ enum {
 };
 
 struct be_tx_bulk_worker {
-	struct m0_be_tx        tbw_tx;
-	struct m0_be_tx_bulk  *tbw_tb;
+	struct m0_be_tx          tbw_tx;
+	struct m0_be_tx_bulk    *tbw_tb;
 	struct m0_be_queue_data *tbw_data;
-	uint64_t               tbw_data_nr;
-	struct m0_sm_ast       tbw_queue_get;
-	struct m0_sm_ast       tbw_init;
-	struct m0_sm_ast       tbw_close;
-	void                  *tbw_user;
-	struct m0_clink        tbw_clink;
-	struct m0_sm_group    *tbw_grp;
-	int                    tbw_rc;
-	struct m0_be_op        tbw_op;
-	bool                   tbw_failed;
-	bool                   tbw_done;
-	uint64_t               tbw_partition;
-	bool                   tbw_terminate_order;
+	uint64_t                 tbw_data_nr;
+	struct m0_sm_ast         tbw_queue_get;
+	struct m0_sm_ast         tbw_init;
+	struct m0_sm_ast         tbw_close;
+	void                    *tbw_user;
+	struct m0_clink          tbw_clink;
+	struct m0_sm_group      *tbw_grp;
+	int                      tbw_rc;
+	struct m0_be_op          tbw_op;
+	bool                     tbw_failed;
+	bool                     tbw_done;
+	uint64_t                 tbw_partition;
+	bool                     tbw_terminate_order;
 };
 
 static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
@@ -200,13 +200,13 @@ static void be_tx_bulk_workers_terminate(struct m0_be_tx_bulk     *tb,
                                          bool                      terminated)
 {
 	struct m0_be_queue_data data = { .bbd_done = true };
-	uint32_t              terminate_partition = UINT32_MAX;
-	uint32_t              not_done = UINT32_MAX;
-	uint32_t              done_nr = 0;
-	uint32_t              i;
-	bool                  done;
-	bool                  terminate_next = false;
-	int                   rc;
+	uint32_t                terminate_partition = UINT32_MAX;
+	uint32_t                not_done = UINT32_MAX;
+	uint32_t                done_nr = 0;
+	uint32_t                i;
+	bool                    done;
+	bool                    terminate_next = false;
+	int                     rc;
 
 	M0_ENTRY("tb=%p worker=%p terminated=%d", tb, worker, !!terminated);
 	be_tx_bulk_lock(tb);
@@ -259,9 +259,9 @@ static void be_tx_bulk_queue_get_cb(struct m0_sm_group *grp,
 				    struct m0_sm_ast   *ast)
 {
 	struct be_tx_bulk_worker *worker = ast->sa_datum;
-	struct m0_be_queue_data     data;
+	struct m0_be_queue_data   data;
 	struct m0_be_tx_bulk     *tb = worker->tbw_tb;
-	struct m0_be_queue         *bq = &tb->btb_q[worker->tbw_partition];
+	struct m0_be_queue       *bq = &tb->btb_q[worker->tbw_partition];
 	bool                      drain_the_queue;
 
 	M0_ENTRY("worker=%p", worker);
@@ -337,9 +337,9 @@ static void be_tx_bulk_init_cb(struct m0_sm_group *grp, struct m0_sm_ast *ast)
 {
 	struct be_tx_bulk_worker *worker = ast->sa_datum;
 	struct m0_be_tx_credit    accum_credit;
-	struct m0_be_queue_data    *data;
+	struct m0_be_queue_data  *data;
 	struct m0_be_tx_bulk     *tb = worker->tbw_tb;
-	struct m0_be_queue         *bq = &tb->btb_q[worker->tbw_partition];
+	struct m0_be_queue       *bq = &tb->btb_q[worker->tbw_partition];
 	m0_bcount_t               accum_payload_size = 0;
 
 	M0_PRE(ast == &worker->tbw_init);
@@ -486,7 +486,7 @@ M0_INTERNAL bool m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
 		.bbd_payload_size = payload_credit,
 		.bbd_done         = false,
 	};
-	bool                  put_fail;
+	bool                    put_fail;
 
 	M0_PRE(partition < tb->btb_cfg.tbc_partitions_nr);
 

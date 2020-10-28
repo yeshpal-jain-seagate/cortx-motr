@@ -81,8 +81,8 @@ struct be_ut_queue_ctx {
 	struct be_ut_queue_cfg    *butx_cfg;
 	struct m0_be_queue        *butx_bq;
 	/* producer increments and takes butx_data[] with the index returned */
-	struct m0_atomic64       butx_pos;
-	struct m0_atomic64       butx_clock;
+	struct m0_atomic64         butx_pos;
+	struct m0_atomic64         butx_clock;
 	struct m0_be_queue_data   *butx_data;
 	struct be_ut_queue_result *butx_result;
 };
@@ -93,21 +93,21 @@ struct be_ut_queue_thread_param {
 	 * Start barrier to launch all threads as close to each other as
 	 * possible.
 	 */
-	struct m0_semaphore   butqp_sem_start;
-	bool                  butqp_is_producer;
+	struct m0_semaphore     butqp_sem_start;
+	bool                    butqp_is_producer;
 	/*
 	 * Thread index, starts from 0 for producers and starts from 0 for
 	 * consumers.
 	 */
-	uint64_t              butqp_index;
+	uint64_t                butqp_index;
 	/* Number of items to put/get to/from the queue. */
-	uint64_t              butqp_items_nr;
+	uint64_t                butqp_items_nr;
 	/* just for debugging purposes */
-	uint64_t              butqp_peeks_successful;
-	uint64_t              butqp_peeks_unsuccessful;
+	uint64_t                butqp_peeks_successful;
+	uint64_t                butqp_peeks_unsuccessful;
 };
 
-#define BE_UT_QUEUE_TEST(q_size_max, producers, consumers, items_nr)      \
+#define BE_UT_QUEUE_TEST(q_size_max, producers, consumers, items_nr)    \
 {                                                                       \
 	.butc_q_size_max = (q_size_max),                                \
 	.butc_producers  = (producers),                                 \
@@ -132,13 +132,13 @@ static struct be_ut_queue_cfg be_ut_queue_tests_cfg[BE_UT_QUEUE_NR] = {
 #undef BE_UT_QUEUE_TEST
 
 static uint64_t be_ut_queue_data_index(struct be_ut_queue_ctx  *ctx,
-                                     struct m0_be_queue_data *data)
+                                       struct m0_be_queue_data *data)
 {
 	return (struct m0_be_queue_data *)data->bbd_user - ctx->butx_data;
 }
 
 static void be_ut_queue_try_peek(struct be_ut_queue_thread_param *param,
-                               struct be_ut_queue_ctx          *ctx)
+                                 struct be_ut_queue_ctx          *ctx)
 {
 	struct m0_be_queue_data data;
 	struct m0_buf         buf;
@@ -161,10 +161,10 @@ static void be_ut_queue_thread(void *_param)
 	struct be_ut_queue_thread_param *param = _param;
 	struct be_ut_queue_ctx          *ctx = param->butqp_ctx;
 	struct m0_be_queue              *bq = ctx->butx_bq;
-	struct m0_be_op               *op;
-	uint64_t                       i;
-	uint64_t                       index;
-	uint64_t                       before;
+	struct m0_be_op                 *op;
+	uint64_t                         i;
+	uint64_t                         index;
+	uint64_t                         before;
 
 	M0_ALLOC_PTR(op);
 	M0_UT_ASSERT(op != NULL);
@@ -292,7 +292,7 @@ static void be_ut_queue_with_cfg(struct be_ut_queue_cfg *test_cfg)
 			       test_cfg->butc_producers +
 			       test_cfg->butc_consumers,
 			       params[j].butqp_peeks_unsuccessful > 0));
-	/* happened-before relation for m0_be_queue_put() and m0_be_queue_gets() */
+	/* happened-before relations */
 	M0_UT_ASSERT(m0_forall(j, items_nr,
 			       r[j].butr_put_before < r[j].butr_get_after));
 	M0_UT_ASSERT(m0_forall(j, items_nr - 1,
