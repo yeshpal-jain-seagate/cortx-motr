@@ -394,6 +394,7 @@ static bool be_tx_bulk_open_cb(struct m0_clink *clink)
 			worker->tbw_rc = tx->t_sm.sm_rc;
 			M0_LOG(M0_ERROR, "tx=%p rc=%d", tx, worker->tbw_rc);
 			be_tx_bulk_queues_drain(tb);
+			worker->tbw_items_nr = 0;
 			/*
 			 * Can't call m0_be_tx_fini(tx) here because
 			 * m0_be_tx_put() for M0_BTS_FAILED transaction
@@ -481,8 +482,11 @@ M0_INTERNAL bool m0_be_tx_bulk_put(struct m0_be_tx_bulk   *tb,
 	be_tx_bulk_unlock(tb);
 	M0_ASSERT(!done);
 
-	if (put_fail)
+	if (put_fail) {
+		m0_be_op_active(op);
+		m0_be_op_done(op);
 		return false;
+	}
 
 	m0_be_queue_lock(&tb->btb_q[partition]);
 	M0_BE_QUEUE_PUT(&tb->btb_q[partition], op, &data);
