@@ -31,7 +31,7 @@
 #define M0_TRACE_SUBSYSTEM M0_TRACE_SUBSYS_BE
 #include "lib/trace.h"
 
-#include "be/tbq.h"
+#include "be/queue.h"
 
 #include "lib/errno.h"          /* ENOMEM */
 #include "lib/memory.h"         /* M0_ALLOC_ARR */

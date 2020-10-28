@@ -28,7 +28,7 @@
 #include "lib/types.h"          /* uint32_t */
 #include "lib/mutex.h"          /* m0_mutex */
 
-#include "be/tbq.h"             /* m0_be_tbq */
+#include "be/queue.h"           /* m0_be_queue */
 #include "be/op.h"              /* m0_be_op */
 
 /**

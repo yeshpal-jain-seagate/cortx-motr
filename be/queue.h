@@ -22,8 +22,8 @@
 
 #pragma once
 
-#ifndef __MOTR_BE_TX_BULK_QUEUE_H__
-#define __MOTR_BE_TX_BULK_QUEUE_H__
+#ifndef __MOTR_BE_QUEUE_H__
+#define __MOTR_BE_QUEUE_H__
 
 /**
  * @defgroup be
@@ -125,7 +125,7 @@ M0_INTERNAL bool m0_be_tbq_peek(struct m0_be_tbq *bbq,
 				m0_be_tbq_peek(bbq, &M0_BUF_INIT_PTR(ptr))
 
 /** @} end of be group */
-#endif /* __MOTR_BE_TX_BULK_QUEUE_H__ */
+#endif /* __MOTR_BE_QUEUE_H__ */
 
 /*
  *  Local variables:

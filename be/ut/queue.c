@@ -30,7 +30,7 @@
 #define M0_TRACE_SUBSYSTEM M0_TRACE_SUBSYS_BE
 #include "lib/trace.h"
 
-#include "be/tbq.h"
+#include "be/queue.h"
 
 #include "lib/memory.h"         /* M0_ALLOC_PTR */
 #include "lib/semaphore.h"      /* m0_semaphore */
