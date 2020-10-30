@@ -38,7 +38,8 @@ M0_TL_DEFINE(smop, static, struct m0_sm_op);
 
 static bool op_invariant(const struct m0_sm_op *op)
 {
-	struct m0_sm_op *next = smop_tlist_next(&op->o_ceo->oe_op, op);
+	struct m0_sm_op *next = smop_tlink_is_in(op) ?
+		smop_tlist_next(&op->o_ceo->oe_op, op) : NULL;
 
 	return  m0_sm_invariant(&op->o_sm) &&
 		_0C(op->o_subo != op) &&
@@ -58,7 +59,8 @@ static bool exec_invariant(const struct m0_sm_op_exec *ceo)
 {
 	return m0_tl_forall(smop, o, &ceo->oe_op,
 			    op_invariant(o) && o->o_ceo == ceo &&
-			    o->o_sm.sm_state != M0_SOS_DONE);
+			    ergo(o->o_sm.sm_state == M0_SOS_DONE,
+				 smop_tlist_next(&ceo->oe_op, o) == NULL));
 }
 
 void m0_sm_op_init(struct m0_sm_op *op, int64_t (*tick)(struct m0_sm_op *),
