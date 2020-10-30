@@ -217,6 +217,26 @@ M0_INTERNAL uint64_t m0_round_down(uint64_t val, uint64_t size);
 #define M0_IN_9(x, v, ...) ((x) == (v) || M0_IN_8(x, __VA_ARGS__))
 
 /**
+ * Vararg max function. Parameters must be constants (the macro evaluates them
+ * multiple times).
+ */
+#define M0_MAX(...) M0_CAT(__M0_MAX_, M0_COUNT_PARAMS(__VA_ARGS__))(__VA_ARGS__)
+
+#define __M0_MAX_0(v) (v)
+#define __M0_MAX_1(v, ...) ((v) > (__VA_ARGS__) ? (v) : (__VA_ARGS__))
+#define __M0_MAX_2(v, ...) __M0_MAX_1(v, __M0_MAX_1(__VA_ARGS__))
+#define __M0_MAX_3(v, ...) __M0_MAX_1(v, __M0_MAX_2(__VA_ARGS__))
+#define __M0_MAX_4(v, ...) __M0_MAX_1(v, __M0_MAX_3(__VA_ARGS__))
+#define __M0_MAX_5(v, ...) __M0_MAX_1(v, __M0_MAX_4(__VA_ARGS__))
+#define __M0_MAX_6(v, ...) __M0_MAX_1(v, __M0_MAX_5(__VA_ARGS__))
+#define __M0_MAX_7(v, ...) __M0_MAX_1(v, __M0_MAX_6(__VA_ARGS__))
+#define __M0_MAX_8(v, ...) __M0_MAX_1(v, __M0_MAX_7(__VA_ARGS__))
+#define __M0_MAX_9(v, ...) __M0_MAX_1(v, __M0_MAX_8(__VA_ARGS__))
+#define __M0_MAX_10(v, ...) __M0_MAX_1(v, __M0_MAX_9(__VA_ARGS__))
+#define __M0_MAX_11(v, ...) __M0_MAX_1(v, __M0_MAX_10(__VA_ARGS__))
+#define __M0_MAX_12(v, ...) __M0_MAX_1(v, __M0_MAX_11(__VA_ARGS__))
+
+/**
    M0_BITS(...) returns bitmask of passed states.
    e.g.
 @code
@@ -360,7 +380,7 @@ M0_FIELD_IS(type, field, uint64_t) ? \
 	sizeof(char [M0_FIELD_IS(type, field, uint64_t) - 1])
 
 /**
- * Returns the number of parameters given to this variadic macro (up to 9
+ * Returns the number of parameters given to this variadic macro (up to 40
  * parameters are supported)
  * @note M0_COUNT_PARAMS() returns max(number_of_parameters - 1, 0)
  *     e.g. M0_COUNT_PARAMS()        -> 0
@@ -368,9 +388,13 @@ M0_FIELD_IS(type, field, uint64_t) ? \
  *          M0_COUNT_PARAMS(x, y)    -> 1
  *          M0_COUNT_PARAMS(x, y, z) -> 2
  */
-#define M0_COUNT_PARAMS(...) \
-	M0_COUNT_PARAMS2(__VA_ARGS__, 9,8,7,6,5,4,3,2,1,0)
-#define M0_COUNT_PARAMS2(_0,_1,_2,_3,_4,_5,_6,_7,_8,_9,_, ...) _
+#define M0_COUNT_PARAMS(...)						\
+	M0_COUNT_PARAMS2(__VA_ARGS__,					\
+		40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21, \
+		20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
+#define M0_COUNT_PARAMS2(_0,_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14, \
+	_15,_16,_17,_18,_19,_20,_21,_22,_23,_24,_25,_26,_27,_28,_29,_30,_31, \
+	_32,_33,_34,_35,_36,_37,_38,_39,_40,_, ...) _
 
 /**
  * Concatenates two arguments to produce a single token.

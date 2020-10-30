@@ -27,8 +27,10 @@
 #include "lib/arith.h"                    /* m0_rnd */
 #include "lib/misc.h"                     /* M0_IN */
 #include "lib/thread.h"
+#include "lib/memory.h"
 
 #include "sm/sm.h"
+#include "sm/op.h"
 
 static struct m0_sm_group G;
 static struct m0_sm       m;
@@ -44,19 +46,6 @@ static void ast_thread(int __d)
 		m0_sm_asts_run(&G);
 		m0_sm_group_unlock(&G);
 	}
-}
-
-static int init(void) {
-	m0_sm_group_init(&G);
-	return 0;
-}
-
-static int fini(void) {
-	more = false;
-	m0_clink_signal(&G.s_clink);
-	m0_thread_join(&ath);
-	m0_sm_group_fini(&G);
-	return 0;
 }
 
 /**
@@ -632,6 +621,209 @@ static void ast_wait(void)
 	m0_mutex_fini(&wait_guard);
 }
 
+static struct m0_sm_state_descr permissive_states[16] = {};
+
+static struct m0_sm_trans_descr permissive_trans[256] = {};
+
+static struct m0_sm_conf permissive = {
+	.scf_name      = "permissive-conf",
+	.scf_nr_states = ARRAY_SIZE(permissive_states),
+	.scf_state     = permissive_states,
+	.scf_trans_nr  = ARRAY_SIZE(permissive_trans),
+	.scf_trans     = permissive_trans
+};
+
+struct lock {
+	struct m0_chan l_chan;
+	bool           l_busy;
+};
+
+enum lock_opcode { LOCK_LOCK, LOCK_UNLOCK };
+
+struct lock_op {
+	struct m0_sm_op  lo_op;
+	struct lock     *lo_lock;
+	enum lock_opcode lo_opc;
+};
+
+static int64_t lock_tick(struct m0_sm_op *smop)
+{
+	struct lock_op *op = M0_AMB(op, smop, lo_op);
+
+	M0_UT_ASSERT(smop->o_sm.sm_state == M0_SOS_INIT);
+
+	if (op->lo_opc == LOCK_UNLOCK) {
+		M0_UT_ASSERT(op->lo_lock->l_busy);
+		op->lo_lock->l_busy = false;
+		m0_chan_broadcast(&op->lo_lock->l_chan);
+	} else if (op->lo_lock->l_busy) {
+		return m0_sm_op_prep(smop, M0_SOS_INIT, &op->lo_lock->l_chan);
+	} else {
+		op->lo_lock->l_busy = true;
+	}
+	return M0_SOS_DONE;
+}
+
+struct queue {
+	int  q_nr;
+	int  q_read;
+	int  q_written;
+	int *q_el;
+	struct m0_chan q_chan;
+};
+
+static void q_init(struct queue *q, int nr, struct m0_mutex *lock)
+{
+	M0_ALLOC_ARR(q->q_el, nr);
+	M0_UT_ASSERT(q->q_el != NULL);
+	q->q_nr = nr;
+	m0_chan_init(&q->q_chan, lock);
+}
+
+static void q_fini(struct queue *q)
+{
+	m0_chan_fini(&q->q_chan);
+	m0_free(q->q_el);
+}
+
+enum q_opcode { Q_PUT, Q_GET, Q_NR };
+struct q_op {
+	struct m0_sm_op qo_op;
+	struct queue   *qo_q;
+	enum q_opcode   qo_opc;
+	int             qo_val;
+};
+
+static int64_t q_tick(struct m0_sm_op *smop);
+static void q_op_init(struct q_op *op, struct m0_sm_op *super,
+		      struct queue *q, int opc, int val)
+{
+	m0_sm_op_init_sub(&op->qo_op, &q_tick, super, &permissive);
+	op->qo_q   = q;
+	op->qo_opc = opc;
+	op->qo_val = val;
+}
+
+static void q_op_fini(struct q_op *op)
+{
+	m0_sm_op_fini(&op->qo_op);
+}
+
+static int64_t q_tick(struct m0_sm_op *smop)
+{
+	struct q_op  *op = M0_AMB(op, smop, qo_op);
+	struct queue *q  = op->qo_q;
+
+	M0_UT_ASSERT(smop->o_sm.sm_state == M0_SOS_INIT);
+
+	if ((op->qo_opc == Q_PUT && q->q_written - q->q_read >= q->q_nr) ||
+	    (op->qo_opc == Q_GET && q->q_written - q->q_read == 0)) {
+		return m0_sm_op_prep(smop, M0_SOS_INIT, &q->q_chan);
+	} else if (op->qo_opc == Q_PUT) {
+		q->q_el[q->q_written++ % q->q_nr] = op->qo_val;
+	} else {
+		op->qo_val = q->q_el[q->q_read++ % q->q_nr];
+	}
+	m0_chan_broadcast(&q->q_chan);
+	return M0_SOS_DONE;
+}
+
+struct pc_op { /* producer-consumer. */
+	struct m0_sm_op pc_op;
+	struct q_op     pc_qop;
+	struct lock_op  pc_lop;
+	enum q_opcode   pc_opc;
+	int             pc_nr;
+	int             pc_idx;
+	int             pc_val;
+};
+
+enum { L_NR = 27 };
+static struct queue q;
+static struct lock l[L_NR];
+static int count[L_NR];
+static uint64_t seed;
+
+enum { QUEUE = M0_SOS_NR, LOCKED, UNLOCKED };
+static int64_t pc_tick(struct m0_sm_op *smop)
+{
+	struct pc_op   *op  = M0_AMB(op, smop, pc_op);
+	struct lock_op *lop = &op->pc_lop;
+
+	switch (smop->o_sm.sm_state) {
+	case M0_SOS_INIT:
+		if (op->pc_opc == Q_PUT)
+			op->pc_val = m0_rnd(100, &seed);
+		q_op_init(&op->pc_qop, smop, &q, op->pc_opc, op->pc_val);
+		return m0_sm_op_subo(smop, &op->pc_qop.qo_op, QUEUE);
+	case QUEUE:
+		q_op_fini(&op->pc_qop);
+		if (op->pc_opc == Q_GET)
+			op->pc_val = op->pc_qop.qo_val;
+		else
+			return M0_SOS_DONE;
+		op->pc_idx = m0_rnd(L_NR, &seed);
+		m0_sm_op_init_sub(&lop->lo_op, &lock_tick, smop, &permissive);
+		lop->lo_lock = &l[op->pc_idx];
+		lop->lo_opc  = LOCK_LOCK;
+		return m0_sm_op_subo(smop, &lop->lo_op, LOCKED);
+	case LOCKED:
+		count[op->pc_idx] += op->pc_val;
+		m0_sm_op_fini(&lop->lo_op);
+		m0_sm_op_init_sub(&lop->lo_op, &lock_tick, smop, &permissive);
+		lop->lo_lock = &l[op->pc_idx];
+		lop->lo_opc  = LOCK_UNLOCK;
+		return m0_sm_op_subo(smop, &lop->lo_op, UNLOCKED);
+	case UNLOCKED:
+		m0_sm_op_fini(&lop->lo_op);
+		return M0_SOS_DONE;
+	}
+}
+
+static void queue_lock_init(void)
+{
+}
+
+static void op(void)
+{
+	queue_lock_init();
+	(void)&pc_tick;
+	(void)&q_init;
+	(void)&q_fini;
+}
+
+static int init(void)
+{
+	int i;
+	int j;
+	m0_sm_group_init(&G);
+
+	M0_UT_ASSERT(ARRAY_SIZE(permissive_states) == 16);
+	M0_UT_ASSERT(ARRAY_SIZE(permissive_trans) == 16*16);
+
+	for (i = 0; i < 16; ++i) {
+		permissive_states[i] = (struct m0_sm_state_descr)
+			{ M0_SDF_INITIAL|M0_SDF_FINAL, "0",
+			  NULL, NULL, NULL, 0xffff };
+		for (j = 0; j < 16; ++j) {
+			permissive_trans[i*16 + j] =
+				(struct m0_sm_trans_descr){ "", i, j };
+		}
+	}
+	m0_sm_conf_init(&permissive);
+	return 0;
+}
+
+static int fini(void)
+{
+	more = false;
+	m0_sm_conf_fini(&permissive);
+	m0_clink_signal(&G.s_clink);
+	m0_thread_join(&ath);
+	m0_sm_group_fini(&G);
+	return 0;
+}
+
 struct m0_ut_suite sm_ut = {
 	.ts_name = "sm-ut",
 	.ts_init = init,
@@ -643,6 +835,7 @@ struct m0_ut_suite sm_ut = {
 		{ "group",      group },
 		{ "chain",      chain },
 		{ "wait",       ast_wait },
+		{ "op",         op },
 		{ NULL, NULL }
 	}
 };
