@@ -63,6 +63,7 @@ struct m0_sm_op {
 	struct m0_tlink       o_linkage;
 	struct m0_sm_op      *o_subo;
 	int                   o_stack[M0_SMOP_STACK_LEN];
+	bool                  o_finalise;
 	int64_t             (*o_tick)(struct m0_sm_op *);
 };
 
@@ -74,7 +75,8 @@ bool     m0_sm_op_tick(struct m0_sm_op *op);
 int64_t  m0_sm_op_prep(struct m0_sm_op *op, int state, struct m0_chan *chan);
 int      m0_sm_op_sub (struct m0_sm_op *op, int state, int ret_state);
 int      m0_sm_op_ret (struct m0_sm_op *op);
-int      m0_sm_op_subo(struct m0_sm_op *op, struct m0_sm_op *subo, int state);
+int      m0_sm_op_subo(struct m0_sm_op *op, struct m0_sm_op *subo, int state,
+		       bool finalise);
 
 void m0_sm_op_init_sub(struct m0_sm_op *op, int64_t (*tick)(struct m0_sm_op *),
 		       struct m0_sm_op *super, const struct m0_sm_conf *conf);

@@ -664,6 +664,24 @@ static int64_t lock_tick(struct m0_sm_op *smop)
 	return M0_SOS_DONE;
 }
 
+static int64_t lock_lock(struct lock *l, struct lock_op *lop,
+			 struct m0_sm_op *smop, int state)
+{
+	m0_sm_op_init_sub(&lop->lo_op, &lock_tick, smop, &permissive);
+	lop->lo_lock = l;
+	lop->lo_opc  = LOCK_LOCK;
+	return m0_sm_op_subo(smop, &lop->lo_op, state, true);
+}
+
+static int64_t lock_unlock(struct lock *l, struct lock_op *lop,
+			 struct m0_sm_op *smop, int state)
+{
+	m0_sm_op_init_sub(&lop->lo_op, &lock_tick, smop, &permissive);
+	lop->lo_lock = l;
+	lop->lo_opc  = LOCK_UNLOCK;
+	return m0_sm_op_subo(smop, &lop->lo_op, state, true);
+}
+
 struct queue {
 	int  q_nr;
 	int  q_read;
@@ -691,12 +709,12 @@ struct q_op {
 	struct m0_sm_op qo_op;
 	struct queue   *qo_q;
 	enum q_opcode   qo_opc;
-	int             qo_val;
+	int            *qo_val;
 };
 
 static int64_t q_tick(struct m0_sm_op *smop);
 static void q_op_init(struct q_op *op, struct m0_sm_op *super,
-		      struct queue *q, int opc, int val)
+		      struct queue *q, int opc, int *val)
 {
 	m0_sm_op_init_sub(&op->qo_op, &q_tick, super, &permissive);
 	op->qo_q   = q;
@@ -720,9 +738,9 @@ static int64_t q_tick(struct m0_sm_op *smop)
 	    (op->qo_opc == Q_GET && q->q_written - q->q_read == 0)) {
 		return m0_sm_op_prep(smop, M0_SOS_INIT, &q->q_chan);
 	} else if (op->qo_opc == Q_PUT) {
-		q->q_el[q->q_written++ % q->q_nr] = op->qo_val;
+		q->q_el[q->q_written++ % q->q_nr] = *op->qo_val;
 	} else {
-		op->qo_val = q->q_el[q->q_read++ % q->q_nr];
+		*op->qo_val = q->q_el[q->q_read++ % q->q_nr];
 	}
 	m0_chan_broadcast(&q->q_chan);
 	return M0_SOS_DONE;
@@ -732,19 +750,16 @@ struct pc_op { /* producer-consumer. */
 	struct m0_sm_op pc_op;
 	struct q_op     pc_qop;
 	struct lock_op  pc_lop;
-	enum q_opcode   pc_opc;
-	int             pc_nr;
-	int             pc_idx;
-	int             pc_val;
 };
 
-enum { L_NR = 27 };
+static struct m0_mutex guard;
 static struct queue q;
-static struct lock l[L_NR];
-static int count[L_NR];
+static struct lock l;
+static int    put_count;
+static int    get_count;
 static uint64_t seed;
 
-enum { QUEUE = M0_SOS_NR, LOCKED, UNLOCKED };
+enum { LOCK = M0_SOS_NR, LOCKED, GET, GOT, LOCKED1, UNLOCKED1 };
 static int64_t pc_tick(struct m0_sm_op *smop)
 {
 	struct pc_op   *op  = M0_AMB(op, smop, pc_op);
@@ -752,44 +767,58 @@ static int64_t pc_tick(struct m0_sm_op *smop)
 
 	switch (smop->o_sm.sm_state) {
 	case M0_SOS_INIT:
-		if (op->pc_opc == Q_PUT)
-			op->pc_val = m0_rnd(100, &seed);
-		q_op_init(&op->pc_qop, smop, &q, op->pc_opc, op->pc_val);
-		return m0_sm_op_subo(smop, &op->pc_qop.qo_op, QUEUE);
-	case QUEUE:
-		q_op_fini(&op->pc_qop);
-		if (op->pc_opc == Q_GET)
-			op->pc_val = op->pc_qop.qo_val;
-		else
-			return M0_SOS_DONE;
-		op->pc_idx = m0_rnd(L_NR, &seed);
-		m0_sm_op_init_sub(&lop->lo_op, &lock_tick, smop, &permissive);
-		lop->lo_lock = &l[op->pc_idx];
-		lop->lo_opc  = LOCK_LOCK;
-		return m0_sm_op_subo(smop, &lop->lo_op, LOCKED);
+		op->pc_val = m0_rnd(100, &seed);
+		q_op_init(&op->pc_qop, smop, &q, Q_PUT, &op->pc_val);
+		return m0_sm_op_subo(smop, &op->pc_qop.qo_op, QUEUE, true);
+	case LOCK:
+		return lock_lock(&l, lop, smop, LOCKED);
 	case LOCKED:
-		count[op->pc_idx] += op->pc_val;
-		m0_sm_op_fini(&lop->lo_op);
-		m0_sm_op_init_sub(&lop->lo_op, &lock_tick, smop, &permissive);
-		lop->lo_lock = &l[op->pc_idx];
-		lop->lo_opc  = LOCK_UNLOCK;
-		return m0_sm_op_subo(smop, &lop->lo_op, UNLOCKED);
-	case UNLOCKED:
-		m0_sm_op_fini(&lop->lo_op);
+		put_count += op->pc_val;
+		return lock_unlock(&l, lop, smop, GET);
+	case GET:
+		q_op_init(&op->pc_qop, smop, &q, Q_GET, &op->pc_val);
+		return m0_sm_op_subo(smop, &op->pc_qop.qo_op, GOT, true);
+	case GOT:
+		return lock_lock(&l, lop, smop, LOCKED1);
+	case LOCKED1:
+		get_count += op->pc_val;
+		return lock_unlock(&l, lop, smop, UNLOCKED1);
+	case UNLOCKED1:
 		return M0_SOS_DONE;
 	}
 }
 
 static void queue_lock_init(void)
 {
+	m0_mutex_init(&guard);
+	q_init(&q, 5, &guard);
+	m0_chan_init(&l.l_chan, &guard);
+	l.l_busy = false;
+}
+
+static void queue_lock_fini(void)
+{
+	M0_UT_ASSERT(!l.l_busy);
+	m0_chan_fini(&l.l_chan);
+	q_fini(&q, 5, &guard);
+	m0_mutex_fini(&guard);
 }
 
 static void op(void)
 {
+	struct m0_thread_exec te;
+	struct pc_op          pc;
+	bool                  result;
+
 	queue_lock_init();
-	(void)&pc_tick;
-	(void)&q_init;
-	(void)&q_fini;
+	m0_thread_exec_init(&te);
+	m0_sm_op_init(&pc.pc_op, &pc_tick, &te.te_ceo, &permissive, &G);
+	result = m0_sm_op_tick(&pc.pc_op);
+	M0_UT_ASSERT(!result);
+	M0_UT_ASSERT(put_count == get_count);
+	m0_sm_op_fini(&pc.pc_op);
+	m0_thread_exec_fini(&te);
+	queue_lock_fini();
 }
 
 static int init(void)

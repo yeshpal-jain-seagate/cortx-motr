@@ -91,10 +91,12 @@ void m0_sm_op_fini(struct m0_sm_op *op)
 	M0_SET0(op);
 }
 
-int m0_sm_op_subo(struct m0_sm_op *op, struct m0_sm_op *subo, int state)
+int m0_sm_op_subo(struct m0_sm_op *op, struct m0_sm_op *subo,
+		  int state, bool finalise)
 {
 	M0_PRE(op_invariant(op) && op->o_subo == NULL);
 	op->o_subo = subo;
+	subo->o_finalise = finalise;
 	return m0_sm_op_sub(op, M0_SOS_SUBO, state);
 }
 
@@ -114,6 +116,8 @@ bool m0_sm_op_tick(struct m0_sm_op *op)
 				result = M0_SMOP_WAIT | M0_SOS_SUBO;
 			} else {
 				result = m0_sm_op_ret(op);
+				if (op->o_subo->o_finalise)
+					m0_sm_op_fini(op->o_subo);
 				op->o_subo = NULL;
 			}
 		} else
