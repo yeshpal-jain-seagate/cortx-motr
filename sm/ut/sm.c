@@ -722,11 +722,6 @@ static void q_op_init(struct q_op *op, struct m0_sm_op *super,
 	op->qo_val = val;
 }
 
-static void q_op_fini(struct q_op *op)
-{
-	m0_sm_op_fini(&op->qo_op);
-}
-
 static int64_t q_tick(struct m0_sm_op *smop)
 {
 	struct q_op  *op = M0_AMB(op, smop, qo_op);
@@ -746,13 +741,27 @@ static int64_t q_tick(struct m0_sm_op *smop)
 	return M0_SOS_DONE;
 }
 
+static int64_t q_get(struct queue *q, struct q_op *qop,
+		     struct m0_sm_op *smop, int state, int *val)
+{
+	q_op_init(qop, smop, q, Q_GET, val);
+	return m0_sm_op_subo(smop, &qop->qo_op, state, true);
+}
+
+static int64_t q_put(struct queue *q, struct q_op *qop,
+		     struct m0_sm_op *smop, int state, int *val)
+{
+	q_op_init(qop, smop, q, Q_PUT, val);
+	return m0_sm_op_subo(smop, &qop->qo_op, state, true);
+}
+
 struct pc_op { /* producer-consumer. */
 	struct m0_sm_op pc_op;
 	struct q_op     pc_qop;
 	struct lock_op  pc_lop;
+	int             pc_val;
 };
 
-static struct m0_mutex guard;
 static struct queue q;
 static struct lock l;
 static int    put_count;
@@ -768,16 +777,14 @@ static int64_t pc_tick(struct m0_sm_op *smop)
 	switch (smop->o_sm.sm_state) {
 	case M0_SOS_INIT:
 		op->pc_val = m0_rnd(100, &seed);
-		q_op_init(&op->pc_qop, smop, &q, Q_PUT, &op->pc_val);
-		return m0_sm_op_subo(smop, &op->pc_qop.qo_op, QUEUE, true);
+		return q_put(&q, &op->pc_qop, smop, LOCK, &op->pc_val);
 	case LOCK:
 		return lock_lock(&l, lop, smop, LOCKED);
 	case LOCKED:
 		put_count += op->pc_val;
 		return lock_unlock(&l, lop, smop, GET);
 	case GET:
-		q_op_init(&op->pc_qop, smop, &q, Q_GET, &op->pc_val);
-		return m0_sm_op_subo(smop, &op->pc_qop.qo_op, GOT, true);
+		return q_get(&q, &op->pc_qop, smop, GOT, &op->pc_val);
 	case GOT:
 		return lock_lock(&l, lop, smop, LOCKED1);
 	case LOCKED1:
@@ -786,13 +793,14 @@ static int64_t pc_tick(struct m0_sm_op *smop)
 	case UNLOCKED1:
 		return M0_SOS_DONE;
 	}
+	M0_IMPOSSIBLE("Wrong state.");
 }
 
 static void queue_lock_init(void)
 {
-	m0_mutex_init(&guard);
-	q_init(&q, 5, &guard);
-	m0_chan_init(&l.l_chan, &guard);
+	seed = time(NULL);
+	q_init(&q, 5, &G.s_lock);
+	m0_chan_init(&l.l_chan, &G.s_lock);
 	l.l_busy = false;
 }
 
@@ -800,16 +808,16 @@ static void queue_lock_fini(void)
 {
 	M0_UT_ASSERT(!l.l_busy);
 	m0_chan_fini(&l.l_chan);
-	q_fini(&q, 5, &guard);
-	m0_mutex_fini(&guard);
+	q_fini(&q);
 }
 
 static void op(void)
 {
-	struct m0_thread_exec te;
-	struct pc_op          pc;
+	struct m0_thread_exec te = {};
+	struct pc_op          pc = {};
 	bool                  result;
 
+	m0_sm_group_lock(&G);
 	queue_lock_init();
 	m0_thread_exec_init(&te);
 	m0_sm_op_init(&pc.pc_op, &pc_tick, &te.te_ceo, &permissive, &G);
@@ -819,6 +827,7 @@ static void op(void)
 	m0_sm_op_fini(&pc.pc_op);
 	m0_thread_exec_fini(&te);
 	queue_lock_fini();
+	m0_sm_group_unlock(&G);
 }
 
 static int init(void)
