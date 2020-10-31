@@ -314,11 +314,6 @@ struct m0_fom_locality {
 M0_INTERNAL bool m0_locality_invariant(const struct m0_fom_locality *loc);
 
 /**
- * Triggers the posting of statistics
- */
-M0_INTERNAL void m0_fom_locality_post_stats(struct m0_fom_locality *loc);
-
-/**
  * Domain is a collection of localities that compete for the resources.
  *
  * Once the fom domain is initialised, fom domain invariant should hold
