@@ -28,6 +28,12 @@
 #include "lib/misc.h"                     /* M0_IN */
 #include "lib/thread.h"
 #include "lib/memory.h"
+#include "lib/semaphore.h"
+#include "lib/locality.h"
+#include "fop/fom.h"
+#include "fop/fom_simple.h"
+#include "reqh/reqh.h"
+#include "reqh/reqh_service.h"
 
 #include "sm/sm.h"
 #include "sm/op.h"
@@ -796,12 +802,14 @@ static int64_t pc_tick(struct m0_sm_op *smop)
 	M0_IMPOSSIBLE("Wrong state.");
 }
 
-static void queue_lock_init(void)
+static void queue_lock_init(struct m0_sm_group *g)
 {
 	seed = time(NULL);
-	q_init(&q, 5, &G.s_lock);
-	m0_chan_init(&l.l_chan, &G.s_lock);
+	q_init(&q, 5, &g->s_lock);
+	m0_chan_init(&l.l_chan, &g->s_lock);
 	l.l_busy = false;
+	put_count = 0;
+	get_count = 0;
 }
 
 static void queue_lock_fini(void)
@@ -811,23 +819,187 @@ static void queue_lock_fini(void)
 	q_fini(&q);
 }
 
-static void op(void)
+static void op_thread(void)
 {
 	struct m0_thread_exec te = {};
 	struct pc_op          pc = {};
 	bool                  result;
 
 	m0_sm_group_lock(&G);
-	queue_lock_init();
+	queue_lock_init(&G);
 	m0_thread_exec_init(&te);
 	m0_sm_op_init(&pc.pc_op, &pc_tick, &te.te_ceo, &permissive, &G);
 	result = m0_sm_op_tick(&pc.pc_op);
 	M0_UT_ASSERT(!result);
+	M0_UT_ASSERT(pc.pc_op.o_sm.sm_state == M0_SOS_DONE);
 	M0_UT_ASSERT(put_count == get_count);
 	m0_sm_op_fini(&pc.pc_op);
 	m0_thread_exec_fini(&te);
 	queue_lock_fini();
 	m0_sm_group_unlock(&G);
+}
+
+enum { NR = 19 };
+
+static void op_chan(void)
+{
+	struct m0_chan_exec ce[NR] = {};
+	struct pc_op        pc[NR] = {};
+	int                 i;
+	int                 result;
+
+	m0_sm_group_lock(&G);
+	queue_lock_init(&G);
+	l.l_busy = true;
+	for (i = 0; i < NR; ++i) {
+		m0_chan_exec_init(&ce[i], &pc[i].pc_op);
+		m0_sm_op_init(&pc[i].pc_op, &pc_tick,
+			      &ce[i].ce_ceo, &permissive, &G);
+		result = m0_sm_op_tick(&pc[i].pc_op);
+		M0_UT_ASSERT(result);
+	}
+	l.l_busy = false;
+	m0_chan_broadcast(&l.l_chan);
+	M0_UT_ASSERT(put_count == get_count);
+	for (i = 0; i < NR; ++i) {
+		M0_UT_ASSERT(pc[i].pc_op.o_sm.sm_state == M0_SOS_DONE);
+		m0_sm_op_fini(&pc[i].pc_op);
+		m0_chan_exec_fini(&ce[i]);
+	}
+	queue_lock_fini();
+	m0_sm_group_unlock(&G);
+}
+
+static void op_ast(void)
+{
+	struct m0_ast_exec ae[NR] = {};
+	struct pc_op       pc[NR] = {};
+	int                i;
+	int                result;
+
+	m0_sm_group_lock(&G);
+	queue_lock_init(&G);
+	l.l_busy = true;
+	for (i = 0; i < NR; ++i) {
+		m0_ast_exec_init(&ae[i], &pc[i].pc_op, &G);
+		m0_sm_op_init(&pc[i].pc_op, &pc_tick,
+			      &ae[i].ae_ceo, &permissive, &G);
+		result = m0_sm_op_tick(&pc[i].pc_op);
+		M0_UT_ASSERT(result);
+	}
+	l.l_busy = false;
+	m0_chan_broadcast(&l.l_chan);
+	/* Wait until ast thread processes all state transitions. */
+	do {
+		for (i = 0; i < NR; ++i) {
+			if (pc[i].pc_op.o_sm.sm_state != M0_SOS_DONE)
+				break;
+		}
+		m0_sm_group_unlock_rec(&G, false);
+		m0_sm_group_lock_rec(&G, false);
+	} while (i < NR);
+	M0_UT_ASSERT(put_count == get_count);
+	for (i = 0; i < NR; ++i) {
+		m0_sm_op_fini(&pc[i].pc_op);
+		m0_ast_exec_fini(&ae[i]);
+	}
+	queue_lock_fini();
+	m0_sm_group_unlock(&G);
+}
+
+static int                 unlocked;
+static struct m0_semaphore done;
+
+struct opfom {
+	struct pc_op       of_pc;
+	struct m0_fom_exec of_fe;
+};
+
+static int optick(struct m0_fom *fom, struct opfom *of, int *__unused)
+{
+	struct pc_op       *pc = &of->of_pc;
+	struct m0_fom_exec *fe = &of->of_fe;
+
+	if (pc->pc_op.o_ceo == NULL) {
+		m0_fom_exec_init(fe, fom);
+		m0_sm_op_init(&pc->pc_op, &pc_tick, &fe->fe_ceo,
+			      &permissive, m0_locality_here()->lo_grp);
+	}
+	if (m0_sm_op_tick(&pc->pc_op)) {
+		/* Unlock the lock taken by op_fom(), once. */
+		if (!unlocked) {
+			unlocked = true;
+			l.l_busy = false;
+			m0_chan_broadcast(&l.l_chan);
+		}
+		return M0_FSO_WAIT;
+	} else {
+		m0_sm_op_fini(&pc->pc_op);
+		m0_fom_exec_fini(fe);
+		m0_semaphore_up(&done);
+		return -1;
+	}
+}
+
+static int loc_done(void *__unused)
+{
+	queue_lock_fini();
+	return 0;
+}
+
+/* XXX copy-paste from lib/ut/locality.c */
+static void fom_simple_svc_start(struct m0_reqh *reqh)
+{
+	struct m0_reqh_service_type *stype;
+	struct m0_reqh_service      *service;
+	int                          rc;
+
+	stype = m0_reqh_service_type_find("simple-fom-service");
+	M0_UT_ASSERT(stype != NULL);
+	rc = m0_reqh_service_allocate(&service, stype, NULL);
+	M0_UT_ASSERT(rc == 0);
+	m0_reqh_service_init(service, reqh,
+			     &M0_FID_INIT(0xdeadb00f, 0xb00fdead));
+	rc = m0_reqh_service_start(service);
+	M0_UT_ASSERT(rc == 0);
+	M0_POST(m0_reqh_service_invariant(service));
+}
+
+static void op_fom(void)
+{
+	struct m0_fom_simple si[NR] = {};
+	struct opfom         of[NR] = {};
+	struct m0_locality  *l1;
+	struct m0_reqh       reqh;
+	int                  result;
+	int                  i;
+
+	result = M0_REQH_INIT(&reqh,
+			      .rhia_dtm     = (void*)1,
+			      .rhia_mdstore = (void*)1,
+			      .rhia_fid     = &M0_FID_TINIT('r', 0, 1));
+	M0_UT_ASSERT(result == 0);
+	m0_reqh_start(&reqh);
+	fom_simple_svc_start(&reqh);
+	l1 = m0_locality_get(1);
+	M0_UT_ASSERT(l1->lo_dom == m0_fom_dom());
+	queue_lock_init(l1->lo_grp);
+	m0_semaphore_init(&done, 0);
+	l.l_busy = true;
+	unlocked = false;
+	for (i = 0; i < NR; ++i) {
+		M0_FOM_SIMPLE_POST(&si[i], &reqh, NULL, &optick, NULL,
+				   &of[i], 1);
+	}
+	for (i = 0; i < NR; ++i)
+		m0_semaphore_down(&done);
+	M0_UT_ASSERT(put_count == get_count);
+	result = m0_locality_call(l1, &loc_done, NULL);
+	M0_UT_ASSERT(result == 0);
+	m0_semaphore_fini(&done);
+	m0_reqh_shutdown(&reqh);
+	m0_reqh_services_terminate(&reqh);
+	m0_reqh_fini(&reqh);
 }
 
 static int init(void)
@@ -867,13 +1039,16 @@ struct m0_ut_suite sm_ut = {
 	.ts_init = init,
 	.ts_fini = fini,
 	.ts_tests = {
-		{ "transition", transition },
-		{ "ast",        ast_test },
-		{ "timeout",    timeout },
-		{ "group",      group },
-		{ "chain",      chain },
-		{ "wait",       ast_wait },
-		{ "op",         op },
+		{ "transition",     &transition },
+		{ "ast",            &ast_test },
+		{ "timeout",        &timeout },
+		{ "group",          &group },
+		{ "chain",          &chain },
+		{ "wait",           &ast_wait },
+		{ "op-thread",      &op_thread },
+		{ "op-chan",        &op_chan },
+		{ "op-ast",         &op_ast },
+		{ "op-fom",         &op_fom },
 		{ NULL, NULL }
 	}
 };

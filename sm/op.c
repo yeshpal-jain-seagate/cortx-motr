@@ -280,7 +280,9 @@ static int64_t thread_exec_prep(struct m0_sm_op_exec *ceo,
 
 	m0_clink_init(&clink, NULL);
 	m0_clink_add(chan, &clink);
+	m0_mutex_unlock(chan->ch_guard);
 	m0_chan_wait(&clink);
+	m0_mutex_lock(chan->ch_guard);
 	m0_clink_del(&clink);
 	m0_clink_fini(&clink);
 	return 0;
