@@ -42,12 +42,15 @@ static bool op_invariant(const struct m0_sm_op *op)
 		smop_tlist_next(&op->o_ceo->oe_op, op) : NULL;
 
 	return  m0_sm_invariant(&op->o_sm) &&
-		_0C(op->o_subo != op) &&
+		_0C(op->o_subo != op) && /* No cycles. */
+		/* All nested smops have the same executive. */
 		_0C(ergo(op->o_subo != NULL, op_invariant(op->o_subo) &&
 			 op->o_subo->o_ceo == op->o_ceo)) &&
 		_0C(ergo(op->o_sm.sm_state == M0_SOS_DONE,
 			 op->o_subo == NULL)) &&
+		/* ceo->oe_op list matches op->o_subo list. */
 		_0C(ergo(next != NULL, next == op->o_subo)) &&
+		/* Next 2: return stack is valid. */
 		_0C(m0_forall(i, ARRAY_SIZE(op->o_stack),
 		      (op->o_stack[i] == -1 ||
 		       op->o_stack[i] < op->o_sm.sm_conf->scf_nr_states))) &&
@@ -59,6 +62,7 @@ static bool exec_invariant(const struct m0_sm_op_exec *ceo)
 {
 	return m0_tl_forall(smop, o, &ceo->oe_op,
 			    op_invariant(o) && o->o_ceo == ceo &&
+			    /* Only the innermost smop can be completed. */
 			    ergo(o->o_sm.sm_state == M0_SOS_DONE,
 				 smop_tlist_next(&ceo->oe_op, o) == NULL));
 }
@@ -102,6 +106,14 @@ int m0_sm_op_subo(struct m0_sm_op *op, struct m0_sm_op *subo,
 	return m0_sm_op_sub(op, M0_SOS_SUBO, state);
 }
 
+/**
+ * Executes a smop as far as possible without blocking.
+ *
+ * Returns true iff there is more work: the smop is not done and has to wait
+ * before further state transitions are possible.
+ *
+ * Returns false iff the smop reached M0_SOS_DONE state.
+ */
 bool m0_sm_op_tick(struct m0_sm_op *op)
 {
 	int64_t               result;
@@ -112,6 +124,10 @@ bool m0_sm_op_tick(struct m0_sm_op *op)
 	smop_tlist_add_tail(&ceo->oe_op, op);
 	do {
 		M0_ASSERT(op->o_sm.sm_state != M0_SOS_DONE);
+		/*
+		 * Internal M0_SOS_SUBO state is used to handle
+		 * sub-operations.
+		 */
 		if (op->o_sm.sm_state == M0_SOS_SUBO) {
 			M0_ASSERT(op->o_subo != NULL && op->o_stack[0] != -1);
 			if (m0_sm_op_tick(op->o_subo)) {
