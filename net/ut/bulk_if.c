@@ -62,16 +62,21 @@ static bool ut_get_max_buffer_segments_called = false;
 static bool ut_end_point_create_called = false;
 static bool ut_end_point_release_called = false;
 
-static int ut_dom_init(struct m0_net_xprt *xprt,
-		       struct m0_net_domain *dom)
+static void vars_reset(void)
 {
-	M0_ASSERT(m0_mutex_is_locked(&m0_net_mutex));
-	M0_ASSERT(m0_mutex_is_not_locked(&dom->nd_mutex));
 	ut_get_max_buffer_size_called = false;
 	ut_get_max_buffer_segment_size_called = false;
 	ut_get_max_buffer_segments_called = false;
 	ut_end_point_create_called = false;
 	ut_end_point_release_called = false;
+}
+
+static int ut_dom_init(struct m0_net_xprt *xprt,
+		       struct m0_net_domain *dom)
+{
+	M0_ASSERT(m0_mutex_is_locked(&m0_net_mutex));
+	M0_ASSERT(m0_mutex_is_not_locked(&dom->nd_mutex));
+	vars_reset();
 	ut_dom_fini_called = false;
 	ut_dom_init_called = true;
 	dom->nd_xprt_private = &ut_xprt_pvt;
@@ -83,6 +88,7 @@ static void ut_dom_fini(struct m0_net_domain *dom)
 	M0_ASSERT(m0_mutex_is_locked(&m0_net_mutex));
 	M0_ASSERT(m0_mutex_is_not_locked(&dom->nd_mutex));
 	ut_dom_fini_called = true;
+	vars_reset();
 }
 
 /* params */
