@@ -1158,7 +1158,6 @@ static bool service_event_handler(struct m0_clink *clink)
 						 co_ha_chan);
 	struct m0_conf_service     *service;
 	struct m0_reqh             *reqh = m0_conf_obj2reqh(obj);
-	bool                        result = true;
 
 	M0_ENTRY();
 	M0_PRE(m0_conf_obj_type(obj) == &M0_CONF_SERVICE_TYPE);
@@ -1202,7 +1201,7 @@ exit_unlock:
 	reqh_service_ctx_sm_unlock(ctx);
 
 	M0_LEAVE();
-	return result;
+	return true;
 }
 
 M0_INTERNAL int m0_reqh_service_ctx_init(struct m0_reqh_service_ctx *ctx,
