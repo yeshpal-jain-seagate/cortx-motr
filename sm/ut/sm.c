@@ -804,7 +804,7 @@ static int64_t pc_tick(struct m0_sm_op *smop)
 
 static void queue_lock_init(struct m0_sm_group *g)
 {
-	seed = time(NULL);
+	seed = m0_time_now();
 	q_init(&q, 5, &g->s_lock);
 	m0_chan_init(&l.l_chan, &g->s_lock);
 	l.l_busy = false;
@@ -843,11 +843,14 @@ enum { NR = 19 };
 
 static void op_chan(void)
 {
-	struct m0_chan_exec ce[NR] = {};
-	struct pc_op        pc[NR] = {};
-	int                 i;
-	int                 result;
+	/* Make them static to avoid large stack frame in kernel space. */
+	static struct m0_chan_exec ce[NR] = {};
+	static struct pc_op        pc[NR] = {};
+	int                        i;
+	int                        result;
 
+	memset(ce, 0, sizeof ce);
+	memset(pc, 0, sizeof pc);
 	m0_sm_group_lock(&G);
 	queue_lock_init(&G);
 	l.l_busy = true;
@@ -872,11 +875,14 @@ static void op_chan(void)
 
 static void op_ast(void)
 {
-	struct m0_ast_exec ae[NR] = {};
-	struct pc_op       pc[NR] = {};
-	int                i;
-	int                result;
+	/* Make them static to avoid large stack frame in kernel space. */
+	static struct m0_ast_exec ae[NR] = {};
+	static struct pc_op       pc[NR] = {};
+	int                       i;
+	int                       result;
 
+	memset(ae, 0, sizeof ae);
+	memset(pc, 0, sizeof ae);
 	m0_sm_group_lock(&G);
 	queue_lock_init(&G);
 	l.l_busy = true;
@@ -967,13 +973,17 @@ static void fom_simple_svc_start(struct m0_reqh *reqh)
 
 static void op_fom(void)
 {
-	struct m0_fom_simple si[NR] = {};
-	struct opfom         of[NR] = {};
+	/* Make them static to avoid large stack frame in kernel space. */
+	static struct m0_fom_simple si[NR] = {};
+	static struct opfom         of[NR] = {};
+	static struct m0_reqh       reqh;
+
 	struct m0_locality  *l1;
-	struct m0_reqh       reqh;
 	int                  result;
 	int                  i;
 
+	memset(si, 0, sizeof si);
+	memset(of, 0, sizeof of);
 	result = M0_REQH_INIT(&reqh,
 			      .rhia_dtm     = (void*)1,
 			      .rhia_mdstore = (void*)1,
