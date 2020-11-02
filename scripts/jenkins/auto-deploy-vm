@@ -1,0 +1,199 @@
+pipeline {
+    agent any
+
+    options {
+        timeout(120)  // abort the build after that many minutes
+        disableConcurrentBuilds()
+        timestamps()
+    }
+    /*
+    environment {
+        //VM1_FQDN = 'ssc-vm-1395.colo.seagate.com'
+		//VM2_FQDN = 'ssc-vm-1384.colo.seagate.com'
+		//REPO_URL = 'http://cortx-storage.colo.seagate.com/releases/cortx_builds/centos-7.8.2003/400/'
+    }
+    */
+
+    stages {
+        
+        stage('Build params') {
+            steps {
+						sh '''
+						echo "Node 1: ${VM1_FQDN}"
+						echo "Node 2: ${VM2_FQDN}"
+						echo "Target: ${REPO_URL}"
+						'''
+					}
+        }
+        
+        /*
+        stage('Prepare VM') {
+            environment {
+                SSC_AUTH = credentials('702612-Bansi')
+            }
+			parallel {
+				stage ('reset-vm-node1'){
+				    environment {
+                        VM_FQDN = "${VM1_FQDN}"
+                    }
+					steps {
+						sh '''curl "https://raw.githubusercontent.com/Seagate/cortx-motr/EOS-14750/scripts/jenkins/vm-reset" -o vm-reset.sh
+						chmod a+x vm-reset.sh
+						echo "VERBOSE=true vm-reset.sh"
+						'''
+					}
+				}
+				stage ('reset-vm-node2'){
+				    environment {
+                        VM_FQDN = "${VM2_FQDN}"
+                    }
+					steps {
+						sh '''curl "https://raw.githubusercontent.com/Seagate/cortx-motr/EOS-14750/scripts/jenkins/vm-reset" -o vm-reset.sh
+						chmod a+x vm-reset.sh
+						echo "VERBOSE=true vm-reset.sh"
+						'''
+					}
+				}
+			}
+        }
+
+        stage('cortx-prereqs') {
+            parallel {
+                stage('cortx-prereqs-node1') {
+                    steps {
+                        script {
+                            def remote = getTestMachine(VM1_FQDN)
+                            def commandResult = sshCommand remote: remote, command: """
+                            curl https://raw.githubusercontent.com/Seagate/cortx-prvsnr/cortx-1.0/cli/src/cortx-prereqs.sh -o cortx-prereqs.sh
+							chmod a+x cortx-prereqs.sh
+							sh cortx-prereqs.sh --disable-sub-mgr
+							true
+                            """
+                            echo "Result: " + commandResult
+                        }
+                    }
+                }
+                stage('cortx-prereqs-node2') {
+                    steps {
+                        script {
+                            def remote = getTestMachine(VM2_FQDN)
+                            def commandResult = sshCommand remote: remote, command: """
+                            curl https://raw.githubusercontent.com/Seagate/cortx-prvsnr/cortx-1.0/cli/src/cortx-prereqs.sh -o cortx-prereqs.sh
+							chmod a+x cortx-prereqs.sh
+							sh cortx-prereqs.sh --disable-sub-mgr
+							true
+                            """
+                            echo "Result: " + commandResult
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Primary node setup') {
+            steps {
+                script {
+                    def remote = getTestMachine(VM1_FQDN)
+                    def commandResult = sshCommand remote: remote, command: """
+                        yum install git -y
+                        yum install expect -y
+						yum install -y python3
+						python3 -m venv venv_cortx
+						source venv_cortx/bin/activate
+						pip3 install -U git+https://github.com/Seagate/cortx-prvsnr@cortx-1.0#subdirectory=api/python
+						provisioner --version
+                        """
+                    echo "Result: " + commandResult
+                }
+            }
+        }
+        
+        stage('config.ini') {
+            steps {
+                script {
+                    def remote = getTestMachine(VM1_FQDN)
+                    def commandResult = sshCommand remote: remote, command: """
+						cat >> ~/config.ini <<EOL
+[storage_enclosure]
+type=other
+
+[srvnode-1]
+hostname=${VM1_FQDN}
+network.data_nw.pvt_ip_addr=None
+network.data_nw.iface=eth1, eth2
+network.mgmt_nw.iface=eth0
+bmc.user=None
+bmc.secret=None
+
+[srvnode-2]
+hostname=${VM2_FQDN}
+network.data_nw.pvt_ip_addr=None
+network.data_nw.iface=eth1, eth2
+network.mgmt_nw.iface=eth0
+bmc.secret=None
+bmc.user=None
+EOL
+                        """
+                    echo "Result: " + commandResult
+                }
+            }
+        }
+        */
+        stage('Deploy') {
+            steps {
+                script {
+                    def remote = getTestMachine(VM1_FQDN)
+                    def commandResult = sshCommand remote: remote, command: """
+cat > ~/deploy_spawn  <<EOL
+#!/bin/bash
+source venv_cortx/bin/activate
+provisioner auto_deploy_vm --console-formatter full --logfile \
+  --logfile-filename /var/log/seagate/provisioner/setup.log --source rpm \
+  --config-path ~/config.ini --ha \
+  --dist-type bundle \
+  --target-build ${REPO_URL} \
+  srvnode-1:${VM1_FQDN} \
+  srvnode-2:${VM2_FQDN}
+EOL
+                    """
+                    echo "Result: " + commandResult
+                    
+                    commandResult = sshCommand remote: remote, command: """
+cat > ~/deploy_expect  <<EOL
+#!/usr/bin/expect -f
+set timeout 300
+spawn ./deploy_spawn
+expect "Password:"
+send -- "seagate\\n"
+expect "Password:"
+send -- "seagate\\n"
+interact
+EOL
+                    """
+                    echo "Result: " + commandResult
+                    
+                    commandResult = sshCommand remote: remote, command: """
+chmod a+x deploy_spawn
+chmod a+x deploy_expect
+./deploy_expect
+                        """
+                    echo "Result: " + commandResult
+                }
+            }
+        }
+
+    }
+}
+
+// Method returns VM Host Information ( host, ssh cred)
+def getTestMachine(String host) {
+    def remote = [:]
+    remote.name = 'cortx-vm-name'
+    remote.host = host
+    remote.user =  'root'
+    remote.password = 'seagate'
+    remote.allowAnyHosts = true
+    remote.fileTransfer = 'scp'
+
+    return remote
+}
