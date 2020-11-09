@@ -221,7 +221,7 @@ halon_interface_is_compatible(struct m0_halon_interface *hi,
 		M0_LOG(M0_ERROR, "The configuration options of the loaded "
 		       "motr library (%s) do not match the expected ones (%s)",
 		       bi->bi_configure_opts, build_configure_opts);
-		return false;
+		return true;
 	}
 	return true;
 }

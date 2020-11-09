@@ -303,7 +303,7 @@ static int cob_fom_populate(struct m0_fom *fom)
 				M0_COB_OP_DELETE : M0_COB_OP_TRUNCATE;
 	cfom->fco_recreate = false;
 	cfom->fco_is_done = false;
-	M0_LOG(M0_DEBUG, "Cob %s operation for "FID_F"/%x "FID_F" for %s",
+	M0_LOG(M0_ALWAYS, "Cob %s operation for "FID_F"/%x "FID_F" for %s",
 			  m0_fop_name(fop), FID_P(&cfom->fco_cfid),
 			  cfom->fco_cob_idx, FID_P(&cfom->fco_gfid),
 			  cob_is_md(cfom) ? "MD" : "IO");
@@ -1114,7 +1114,7 @@ static int cd_cob_delete(struct m0_fom            *fom,
 	M0_PRE(fom != NULL);
 	M0_PRE(cd != NULL);
 
-        M0_LOG(M0_DEBUG, "Deleting cob for "FID_F"/%x",
+        M0_LOG(M0_ALWAYS, "Deleting cob for "FID_F"/%x",
 	       FID_P(&cd->fco_cfid), cd->fco_cob_idx);
 
 	rc = cob_locate(fom, &cob);

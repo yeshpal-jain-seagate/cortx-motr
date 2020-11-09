@@ -882,7 +882,7 @@ M0_INTERNAL int m0_io_cob_create(struct m0_cob_domain *cdom,
 	struct m0_cob_nsrec   nsrec = {};
 	struct m0_fid         gfid;
 
-	M0_ENTRY("COB fid:"FID_F"pver:"FID_F, FID_P(fid), FID_P(pver));
+	M0_LOG(M0_ALWAYS, "COB fid:"FID_F"pver:"FID_F, FID_P(fid), FID_P(pver));
 	rc = m0_cob_alloc(cdom, &cob);
 	if (rc != 0)
 		return M0_RC(rc);
