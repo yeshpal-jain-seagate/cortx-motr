@@ -419,6 +419,7 @@ M0_INTERNAL void m0_be_log_record_ext(struct m0_be_log_record *record,
 M0_INTERNAL void m0_be_log_record_skip_discard(struct m0_be_log_record *record);
 /** Discards used space withing log. */
 M0_INTERNAL void m0_be_log_record_discard(struct m0_be_log *log,
+					  bool              call_discard,
 					  m0_bcount_t       size);
 
 M0_INTERNAL int m0_be_log_record_io_create(struct m0_be_log_record *record,

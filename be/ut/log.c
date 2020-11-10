@@ -162,7 +162,7 @@ static void be_ut_log_multi_thread(struct be_ut_log_thread_ctx *ctx)
 
 	m0_mutex_lock(lock);
 	if (ctx->bult_discard)
-		m0_be_log_record_discard(record->lgr_log, record->lgr_size);
+		m0_be_log_record_discard(record->lgr_log, true, record->lgr_size);
 	else
 		m0_be_log_record_skip_discard(record);
 	m0_mutex_unlock(lock);
@@ -242,7 +242,7 @@ static void be_ut_log_multi_ut(int thread_nr, bool discard,
 	for (i = 0; i < thread_nr; ++i) {
 		record = &ctxs[i].bult_record;
 		if (discard) {
-			m0_be_log_record_discard(record->lgr_log,
+			m0_be_log_record_discard(record->lgr_log, true,
 						  record->lgr_size);
 		} else {
 			m0_be_log_record_skip_discard(record);
@@ -347,7 +347,7 @@ static void be_ut_log_record_wait_fini_one(struct m0_be_log_record *record,
 	m0_be_op_wait(op);
 	m0_mutex_lock(lock);
 	if (discard)
-		m0_be_log_record_discard(record->lgr_log, record->lgr_size);
+		m0_be_log_record_discard(record->lgr_log, true, record->lgr_size);
 	else
 		m0_be_log_record_skip_discard(record);
 	m0_mutex_unlock(lock);
@@ -472,7 +472,7 @@ static void be_ut_log_recover_and_discard(struct m0_be_log *log,
 				       bo_sm.sm_rc);
 		M0_UT_ASSERT(rc == 0);
 		m0_mutex_lock(lock);
-		m0_be_log_record_discard(log, record.lgr_size);
+		m0_be_log_record_discard(log, true, record.lgr_size);
 		m0_mutex_unlock(lock);
 		m0_be_log_record_reset(&record);
 	}
@@ -733,7 +733,7 @@ void m0_be_ut_log_user(void)
 	M0_UT_ASSERT(rc == 0);
 
 	m0_mutex_lock(&lock);
-	m0_be_log_record_discard(&log, record.lgr_size);
+	m0_be_log_record_discard(&log, true, record.lgr_size);
 	m0_mutex_unlock(&lock);
 	m0_be_log_record_deallocate(&record);
 	m0_be_log_record_fini(&record);

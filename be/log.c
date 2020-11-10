@@ -519,6 +519,7 @@ M0_INTERNAL void m0_be_log_record_skip_discard(struct m0_be_log_record *record)
 }
 
 M0_INTERNAL void m0_be_log_record_discard(struct m0_be_log *log,
+					  bool              call_discard,
 					  m0_bcount_t       size)
 {
 	M0_ENTRY("log="BL_F" size=%"PRIu64, BL_P(log), size);
@@ -544,7 +545,8 @@ M0_INTERNAL void m0_be_log_record_discard(struct m0_be_log *log,
 
 	M0_POST(m0_be_log__invariant(log));
 
-	log->lg_got_space_cb(log);
+	if (call_discard)
+		log->lg_got_space_cb(log);
 }
 
 static void be_log_io_credit(struct m0_be_log       *log,

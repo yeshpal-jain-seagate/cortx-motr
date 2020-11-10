@@ -176,7 +176,7 @@ static void be_ut_recovery_log_fill(struct be_ut_recovery_ctx *ctx,
 
 		m0_mutex_lock(lock);
 		if (i < discard_nr) {
-			m0_be_log_record_discard(record->lgr_log,
+			m0_be_log_record_discard(record->lgr_log, true,
 						  record->lgr_size);
 		} else {
 			m0_be_log_record_skip_discard(record);
@@ -217,7 +217,7 @@ static int be_ut_recovery_iter_count(struct be_ut_recovery_ctx *ctx)
 				       bo_sm.sm_rc);
 		M0_UT_ASSERT(rc == 0);
 		m0_mutex_lock(lock);
-		m0_be_log_record_discard(record.lgr_log, record.lgr_size);
+		m0_be_log_record_discard(record.lgr_log, true, record.lgr_size);
 		m0_mutex_unlock(lock);
 		m0_be_log_record_reset(&record);
 	}

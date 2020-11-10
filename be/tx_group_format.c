@@ -546,7 +546,8 @@ M0_INTERNAL void m0_be_group_format_discard(struct m0_be_log_discard      *ld,
 	M0_LOG(M0_DEBUG, "log=%p ldi=%p ext="EXT_F, log, ldi, EXT_P(ext));
 
 	m0_mutex_lock(log->lg_cfg.lc_lock);     /* XXX */
-	m0_be_log_record_discard(log, ext->e_end - ext->e_start);
+	m0_be_log_record_discard(log, ldi == ld->lds_sync_item,
+				 ext->e_end - ext->e_start);
 	m0_mutex_unlock(log->lg_cfg.lc_lock);   /* XXX */
 }
 
