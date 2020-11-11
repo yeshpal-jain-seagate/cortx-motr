@@ -229,33 +229,21 @@ static void be_log_discard_check_sync(struct m0_be_log_discard *ld,
 static void be_log_discard_item_discard(struct m0_be_log_discard      *ld,
 					struct m0_be_log_discard_item *ldi)
 {
-	M0_PRE(be_log_discard_is_locked(ld));
+	//M0_PRE(be_log_discard_is_locked(ld));
 
 	M0_ENTRY("ld=%p ldi=%p", ld, ldi);
 
-	/**
-	 *    Don't ask: one ast at a time! Don't want engine lock (in the bottom most
-	 *    stack callback to be taken under ld lock:
-	 *    { be_log_discard_sync_done_cb --> ld->lds_discard_ast_posted --> return }
-	 *
-	 *    Lock magic begins here:
-	 */
-	be_log_discard_unlock(ld);
 	ld->lds_cfg.ldsc_discard(ld, ldi);
-	be_log_discard_lock(ld);
-	/**
-	 *    end of lock magic
-	 *    .
-	 */
-
 	ldi->ldi_state = LDI_DISCARDED;
+	be_log_discard_lock(ld);
 	m0_be_log_discard_item_put(ld, ldi);
+	be_log_discard_unlock(ld);
 }
 
 static void be_log_discard_item_trydiscard(struct m0_be_log_discard      *ld,
                                            struct m0_be_log_discard_item *ldi)
 {
-	M0_PRE(be_log_discard_is_locked(ld));
+	//M0_PRE(be_log_discard_is_locked(ld));
 	M0_PRE(M0_IN(ldi->ldi_state, (LDI_STARTING, LDI_FINISHED)));
 
 	if (ldi->ldi_state == LDI_FINISHED && ldi->ldi_synced)
@@ -268,34 +256,44 @@ static void be_log_discard_ast(struct m0_sm_group *grp,
 			       struct m0_sm_ast   *ast)
 {
 	struct m0_be_log_discard      *ld  = ast->sa_datum;
-	struct m0_be_log_discard_item *ldi = ast->sa_datum;
 
-	//M0_LOG(M0_DEBUG, "before lock");
+	struct m0_be_log_discard_item *ldi;
+	struct m0_be_log_discard_item *sync_item;
+
+
 	be_log_discard_lock(ld);
-	//M0_LOG(M0_DEBUG, "after lock");
 	M0_PRE(ld->lds_sync_item != NULL);
-	m0_tl_for(ld_start, &ld->lds_start_q, ldi) {
+	be_log_discard_unlock(ld);
+
+	while (true) {
+		be_log_discard_lock(ld);
+		ldi = ld_start_tlist_head(&ld->lds_start_q);
+		if (ldi == NULL) {
+			be_log_discard_unlock(ld);
+			break;
+		}
+		ld_start_tlist_del(ldi);
 		M0_ASSERT_INFO(ldi->ldi_state == LDI_FINISHED,
 			       "ldi=%p state=%d", ldi, ldi->ldi_state);
-		ld_start_tlist_del(ldi);
+		sync_item = ld->lds_sync_item;
+		be_log_discard_unlock(ld);
+
 		ldi->ldi_synced = true;
 		be_log_discard_item_trydiscard(ld, ldi);
-		if (ldi == ld->lds_sync_item)
+
+		if (ldi == sync_item)
 			break;
-		//M0_LOG(M0_DEBUG, "after iteration");
-	} m0_tl_endfor;
+	}
+
+
+	be_log_discard_lock(ld); // added
 	ld->lds_sync_item = NULL;
 	ld->lds_sync_in_progress = false;
-	//M0_LOG(M0_DEBUG, "after sync");
 	if (ld_start_tlist_is_empty(&ld->lds_start_q))
 		ld->lds_sync_deadline = M0_TIME_NEVER;
 	be_log_discard_check_sync(ld, false);
 	ld->lds_discard_ast_posted = false;
 
-	/* M0_LOG(M0_DEBUG, "lds_sync_in_progress=%d ld->lds_need_sync=%d lds_sync_item=%p", */
-	/*        !!ld->lds_sync_in_progress, */
-	/*        !!ld->lds_need_sync, */
-	/*        ld->lds_sync_item); */
 	if (ld->lds_discard_waiting)
 		m0_semaphore_up(&ld->lds_discard_wait_sem);
 	be_log_discard_unlock(ld);
