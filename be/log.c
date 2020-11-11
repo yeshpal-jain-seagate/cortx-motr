@@ -540,7 +540,7 @@ M0_INTERNAL void m0_be_log_record_discard(struct m0_be_log *log,
 	}
 	log->lg_free      += size;
 	log->lg_discarded += size;
-	M0_LOG(M0_DEBUG, "log="BL_F" size=%"PRIu64, BL_P(log), size);
+	M0_LOG(M0_ALWAYS, "log="BL_F" size=%"PRIu64, BL_P(log), size);
 
 	M0_POST(m0_be_log__invariant(log));
 
@@ -678,7 +678,7 @@ m0_be_log_record_io_prepare(struct m0_be_log_record *record,
 	struct m0_be_fmt_log_record_footer *footer;
 	struct m0_be_fmt_log_record_header *header;
 
-	M0_ENTRY("record=%p opcode=%d size_reserved=%lu",
+	M0_LOG(M0_ALWAYS,"record=%p opcode=%d size_reserved=%lu",
 	         record, opcode, size_reserved);
 
 	M0_PRE(m0_mutex_is_locked(log->lg_external_lock));

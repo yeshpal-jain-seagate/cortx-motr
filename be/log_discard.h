@@ -115,12 +115,11 @@ struct m0_be_log_discard {
 	 * XXX Temporary solution.
 	 */
 	struct m0_semaphore                  lds_discard_wait_sem;
-	//int                                  lds_discard_left;
 	bool                                 lds_discard_waiting;
 
 
 	/**
-	   @TODO: comment this.
+	 * Add single ast to discard multiple ldi
 	 */
 	struct m0_sm_ast                     lds_discard_ast;
 	bool                                 lds_discard_ast_posted;

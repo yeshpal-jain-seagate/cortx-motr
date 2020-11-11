@@ -122,7 +122,6 @@ M0_INTERNAL int m0_be_log_discard_init(struct m0_be_log_discard     *ld,
 	ld->lds_need_sync = false;
 	ld->lds_sync_in_progress = false;
 	ld->lds_sync_deadline = M0_TIME_NEVER;
-	//ld->lds_discard_left = 0;
 	ld->lds_discard_waiting = false;
 	m0_be_op_init(&ld->lds_sync_op);
 	m0_be_op_callback_set(&ld->lds_sync_op, &be_log_discard_sync_done_cb,
@@ -229,7 +228,6 @@ static void be_log_discard_check_sync(struct m0_be_log_discard *ld,
 static void be_log_discard_item_discard(struct m0_be_log_discard      *ld,
 					struct m0_be_log_discard_item *ldi)
 {
-	//M0_PRE(be_log_discard_is_locked(ld));
 
 	M0_ENTRY("ld=%p ldi=%p", ld, ldi);
 
@@ -243,7 +241,6 @@ static void be_log_discard_item_discard(struct m0_be_log_discard      *ld,
 static void be_log_discard_item_trydiscard(struct m0_be_log_discard      *ld,
                                            struct m0_be_log_discard_item *ldi)
 {
-	//M0_PRE(be_log_discard_is_locked(ld));
 	M0_PRE(M0_IN(ldi->ldi_state, (LDI_STARTING, LDI_FINISHED)));
 
 	if (ldi->ldi_state == LDI_FINISHED && ldi->ldi_synced)
@@ -260,33 +257,26 @@ static void be_log_discard_ast(struct m0_sm_group *grp,
 	struct m0_be_log_discard_item *ldi;
 	struct m0_be_log_discard_item *sync_item;
 
-
+	M0_ENTRY("ld=%p", ld);
 	be_log_discard_lock(ld);
 	M0_PRE(ld->lds_sync_item != NULL);
 	be_log_discard_unlock(ld);
 
-	while (true) {
-		be_log_discard_lock(ld);
-		ldi = ld_start_tlist_head(&ld->lds_start_q);
-		if (ldi == NULL) {
-			be_log_discard_unlock(ld);
-			break;
-		}
-		ld_start_tlist_del(ldi);
-		M0_ASSERT_INFO(ldi->ldi_state == LDI_FINISHED,
-			       "ldi=%p state=%d", ldi, ldi->ldi_state);
-		sync_item = ld->lds_sync_item;
-		be_log_discard_unlock(ld);
+	do{
+                be_log_discard_lock(ld);
+                sync_item = ld->lds_sync_item;
+                ldi = ld_start_tlist_pop(&ld->lds_start_q);
+                be_log_discard_unlock(ld);
 
-		ldi->ldi_synced = true;
-		be_log_discard_item_trydiscard(ld, ldi);
+                M0_ASSERT(ldi != NULL); // it's not an endless loop
+                M0_ASSERT_INFO(ldi->ldi_state == LDI_FINISHED,
+                   "ldi=%p state=%d", ldi, ldi->ldi_state);
+                ldi->ldi_synced = true;
+                be_log_discard_item_trydiscard(ld, ldi);
+	
+	}while (ldi != sync_item);
 
-		if (ldi == sync_item)
-			break;
-	}
-
-
-	be_log_discard_lock(ld); // added
+	be_log_discard_lock(ld);
 	ld->lds_sync_item = NULL;
 	ld->lds_sync_in_progress = false;
 	if (ld_start_tlist_is_empty(&ld->lds_start_q))
@@ -303,7 +293,7 @@ static void be_log_discard_sync_done_cb(struct m0_be_op *op, void *param)
 {
 	struct m0_be_log_discard      *ld = param;
 
-	M0_LOG(M0_DEBUG, "ld=%p", ld);
+	M0_LOG(M0_ALWAYS, "ld=%p", ld);
 
 	m0_be_op_reset(op);
 
