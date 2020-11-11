@@ -1114,6 +1114,13 @@ static int cas_fom_tick(struct m0_fom *fom0)
 
 	M0_ENTRY("fom %p phase %d", fom, phase);
 	is_index_drop = op_is_index_drop(opc, ct);
+
+/*
+	if (phase == M0_FOPH_INIT) {
+		M0_LOG(M0_ALWAYS, "EOS-15042: fom %p, phase %d, opcode %d, ct %d, is_meta %d,"
+			"ind_drop %d ", fom, phase, opc, ct, is_meta, is_index_drop);
+	}
+*/
 	M0_PRE(ctidx != NULL);
 	M0_PRE(cas_fom_invariant(fom));
 	switch (phase) {
@@ -1357,8 +1364,10 @@ static int cas_fom_tick(struct m0_fom *fom0)
 			if (cas_max_reply_payload_exceeded(fom))
 				cas_fom_failure(fom, M0_ERR(-E2BIG),
 						opc == CO_CUR);
-			else
+			else {
+				// M0_LOG(M0_ALWAYS, "EOS-15042: CAS_LOOP: Triggered cas_fom_success");
 				cas_fom_success(fom, opc);
+			}
 			addb2_add_kv_attrs(fom, STATS_KV_OUT);
 		} else {
 			do_ctidx = cas_ctidx_op_needed(fom, opc, ct, ipos);
@@ -1521,6 +1530,7 @@ static int cas_fom_tick(struct m0_fom *fom0)
 	case CAS_IDROP_START_GC:
 		/* Start garbage collector, if it is not already running. */
 		m0_cas_gc_start(&service->c_service);
+		// M0_LOG(M0_ALWAYS, "EOS-15042: START_GC: Triggered cas_fom_success");
 		cas_fom_success(fom, opc);
 		break;
 		/*
@@ -1951,6 +1961,10 @@ static void cas_prep(struct cas_fom *fom, enum m0_cas_opcode opc,
 	m0_bcount_t       vnob;
 
 	cas_incoming_kv(fom, rec_pos, &key, &val);
+	if ((key.b_addr != NULL) && (val.b_addr != NULL)) {
+		M0_LOG(M0_ALWAYS, "EOS-15042: Key: %.*s", (int)key.b_nob, (char *)key.b_addr);
+		M0_LOG(M0_ALWAYS, "EOS-15042: Val: %.*s", (int)val.b_nob, (char *)val.b_addr);
+	}
 	knob = cas_kv_nob(&key);
 	vnob = cas_kv_nob(&val);
 	switch (CTG_OP_COMBINE(opc, ct)) {

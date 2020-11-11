@@ -455,6 +455,7 @@ int m0_idx_op(struct m0_idx       *idx,
 	      struct m0_op       **op)
 {
 	int rc;
+	int i;
 
 	M0_ENTRY();
 
@@ -479,10 +480,17 @@ int m0_idx_op(struct m0_idx       *idx,
 	rc = m0_op_get(op, sizeof(struct m0_op_idx));
 	if (rc == 0) {
 		M0_ASSERT(*op != NULL);
+		M0_LOG(M0_ALWAYS, "EOS-15042:Client: Key-Values");
+
+		for (i = 0; i < keys->ov_vec.v_nr; i++) {
+			M0_LOG(M0_ALWAYS, "EOS-15042: KEY: %.*s ",
+				(int)keys->ov_vec.v_count[i], (char *)keys->ov_buf[i]);
+			M0_LOG(M0_ALWAYS, "EOS-15042: VAL: %.*s ",
+				(int)vals->ov_vec.v_count[i], (char *)vals->ov_buf[i]);
+		}
 		rc = idx_op_init(idx, opcode, keys, vals, rcs, flags,
 					*op);
 	}
-
 	return M0_RC(rc);
 }
 M0_EXPORTED(m0_idx_op);
