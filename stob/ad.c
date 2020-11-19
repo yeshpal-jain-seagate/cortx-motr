@@ -1023,7 +1023,7 @@ static int stob_ad_balloc(struct m0_stob_ad_domain *adom, struct m0_dtx *tx,
 	int                  rc;
 
 	count >>= adom->sad_babshift;
-	M0_LOG(M0_DEBUG, "count=%lu", (unsigned long)count);
+	M0_LOG(M0_ALWAYS, "M-15132: count=%lu", (unsigned long)count);
 	M0_ASSERT(count > 0);
 	rc = ballroom->ab_ops->bo_alloc(ballroom, tx, count, out, alloc_type);
 	out->e_start <<= adom->sad_babshift;
@@ -1807,6 +1807,7 @@ static int stob_ad_write_prepare(struct m0_stob_io        *io,
 	M0_PRE(io->si_opcode == SIO_WRITE);
 	M0_ADDB2_ADD(M0_AVI_STOB_IO_REQ, io->si_id, M0_AVI_AD_WR_PREPARE);
 	todo = m0_vec_count(&io->si_user.ov_vec);
+	M0_LOG(M0_ALWAYS, "M-15132: op=%d sz=%lu", io->si_opcode, (unsigned long)todo);
 	M0_ENTRY("op=%d sz=%lu", io->si_opcode, (unsigned long)todo);
 	back = &aio->ai_back;
 	M0_SET0(&head);
@@ -1892,6 +1893,8 @@ static int stob_ad_io_launch_prepare(struct m0_stob_io *io)
 	/* only read-write at the moment */
 	M0_PRE(io->si_opcode == SIO_READ || io->si_opcode == SIO_WRITE);
 
+	M0_LOG(M0_ALWAYS, "M-15132: op=%d, stob %p, stob_id="STOB_ID_F,
+		 io->si_opcode, io->si_obj, STOB_ID_P(&io->si_obj->so_id));
 	M0_ENTRY("op=%d, stob %p, stob_id="STOB_ID_F,
 		 io->si_opcode, io->si_obj, STOB_ID_P(&io->si_obj->so_id));
 

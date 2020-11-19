@@ -2033,6 +2033,7 @@ static int balloc_simple_scan_group(struct balloc_allocation_context *bac,
 
 	m0_ext_init(&ex);
 	len = 1 << bac->bac_order2;
+	M0_LOG(M0_ALWAYS, "M-15132: Len %"PRIu64"", len);
 /*	for (; len <= sb->bsb_groupsize; len = len << 1) {
 		M0_LOG(M0_DEBUG, "searching at %d (gs = %d) for order = %d "
 			"len=%d:%x",
@@ -2049,6 +2050,7 @@ static int balloc_simple_scan_group(struct balloc_allocation_context *bac,
 */
 
 	found = balloc_find_extent_buddy(bac, grp, len, alloc_flag, &ex);
+	M0_LOG(M0_ALWAYS, "M-15132: Found %d", found);
 	if (found) {
 		balloc_debug_dump_extent("found at simple scan", &ex);
 
@@ -2201,6 +2203,9 @@ static int balloc_wild_scan_group(struct balloc_allocation_context *bac,
 	free = group_freeblocks_get(grp);
 	list = &grp->bgi_normal.bzp_extents;
 #endif
+	M0_LOG(M0_ALWAYS, "M-15132: Wild scanning at group %llu: freeblocks=%llu",
+		(unsigned long long)grp->bgi_groupno,
+		(unsigned long long)free);
 
 
 	M0_LOG(M0_DEBUG, "Wild scanning at group %llu: freeblocks=%llu",
@@ -2220,9 +2225,11 @@ static int balloc_wild_scan_group(struct balloc_allocation_context *bac,
 		balloc_measure_extent(bac, grp, alloc_flag, ex);
 
 		free -= m0_ext_length(ex);
+		M0_LOG(M0_ALWAYS, "M-15132: Free: %"PRIu64"", free);
 		if (free == 0 || bac->bac_status != M0_BALLOC_AC_CONTINUE)
 			return M0_RC(0);
 	}
+	M0_LOG(M0_ALWAYS, "M-15132: Before balloc check limits");
 
 	rc = balloc_check_limits(bac, grp, 1, alloc_flag);
 	return M0_RC(rc);
@@ -2333,7 +2340,7 @@ balloc_regular_allocator(struct balloc_allocation_context *bac)
 	ngroups = bac->bac_ctxt->cb_sb.bsb_groupcount;
 	len = m0_ext_length(&bac->bac_goal);
 
-	M0_ENTRY("goal=0x%lx len=%d",
+	M0_LOG(M0_ALWAYS, "M-15132: goal=0x%lx len=%d",
 		(unsigned long)bac->bac_goal.e_start, (int)len);
 
 #if 0
@@ -2408,14 +2415,18 @@ repeat:
 			/* m0_balloc_debug_dump_group_extent("AAA", grp); */
 			rc = 1;
 #ifdef __SPARE_SPACE__
-			if (is_spare(bac->bac_flags))
+			if (is_spare(bac->bac_flags)) {
 				rc = allocate_blocks(cr, bac, grp, len,
 						     M0_BALLOC_SPARE_ZONE);
+				M0_LOG(M0_ALWAYS, "M-15132: Enter in spare space ret valu: %d", rc);
+			}
 #endif
 			if (rc != 0 && (is_any(bac->bac_flags) ||
-			    is_normal(bac->bac_flags)))
+			    is_normal(bac->bac_flags))) {
 				rc = allocate_blocks(cr, bac, grp, len,
 						     M0_BALLOC_NORMAL_ZONE);
+				M0_LOG(M0_ALWAYS, "M-15132: Enter in non-spare space ret valu: %d", rc);
+			}
 			m0_balloc_unlock_group(grp);
 
 			if (bac->bac_status != M0_BALLOC_AC_CONTINUE)
@@ -2473,20 +2484,30 @@ static int allocate_blocks(int cr, struct balloc_allocation_context *bac,
 	M0_PRE(!is_any(alloc_type));
 	M0_PRE(is_spare(alloc_type) || is_normal(alloc_type));
 
+	//M0_LOG(M0_DEBUG, "Enter in funciton");
+	M0_LOG(M0_ALWAYS, "M-15132: Allocate Typ: %u", alloc_type);
+	M0_LOG(M0_ALWAYS, "M-15132: Len: %"PRIu64"", len);
+
+	/* VENKY: Capture return value here and return ENOSPC error */
 	if (cr == 0 ||
-	    (cr == 1 && len == bac->bac_ctxt->cb_sb.bsb_stripe_size))
+	    (cr == 1 && len == bac->bac_ctxt->cb_sb.bsb_stripe_size)) {
 		rc = balloc_simple_scan_group(bac, grp, alloc_type);
-	else
+		M0_LOG(M0_ALWAYS, "M-15132: if - Return Value: %d", rc);
+	} else {
 		rc = balloc_wild_scan_group(bac, grp, alloc_type);
+		M0_LOG(M0_ALWAYS, "M-15132: else - Return Value: %d", rc);
+	}
 
 	/* update db according to the allocation result */
 	if (rc == 0 && bac->bac_status == M0_BALLOC_AC_FOUND) {
+		M0_LOG(M0_ALWAYS, "M-15132:M0_BALLOC_AC_FOUND if block");
 		if (len < m0_ext_length(&bac->bac_best))
 			balloc_new_preallocation(bac);
 		M0_ASSERT(is_extent_free(grp, &bac->bac_final, alloc_type,
 					 &cur));
 		rc = balloc_alloc_db_update(bac->bac_ctxt, bac->bac_tx, grp,
 					    &bac->bac_final, alloc_type, cur);
+		M0_LOG(M0_ALWAYS, "M-15132: Return Value: %d", rc);
 	}
 	return rc;
 }
@@ -2537,6 +2558,7 @@ int balloc_allocate_internal(struct m0_balloc *ctx,
 		req->bar_len >>= 1;
 	}
 	rc = req->bar_len == 0 ? -ENOSPC : 0;
+	M0_LOG(M0_ALWAYS, "M-15132: Reutrn value: %d", rc);
 	if (rc != 0)
 		goto out;
 
@@ -2798,7 +2820,7 @@ static int balloc_alloc(struct m0_ad_balloc *ballroom, struct m0_dtx *tx,
 	m0_bcount_t                    freeblocks;
 	int                            rc;
 
-	M0_ENTRY("bal=%p goal=0x%lx count=%lu", motr,
+	M0_LOG(M0_ALWAYS, "M-15132: bal=%p goal=0x%lx count=%lu", motr,
 			(unsigned long)out->e_start,
 			(unsigned long)count);
 	M0_PRE(count > 0);

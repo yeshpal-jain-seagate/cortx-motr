@@ -160,6 +160,8 @@ M0_INTERNAL int m0_stob_io_prepare(struct m0_stob_io *io, struct m0_stob *obj,
 	int                  result;
 
 	M0_PRE(stob_io_invariant(io, obj, SIS_IDLE));
+	M0_LOG(M0_ALWAYS, "M-15132: stob=%p so_id="STOB_ID_F" si_opcode=%d io=%p tx=%p",
+		 obj, STOB_ID_P(m0_stob_id_get(obj)), io->si_opcode, io, tx);
 	M0_ENTRY("stob=%p so_id="STOB_ID_F" si_opcode=%d io=%p tx=%p",
 		 obj, STOB_ID_P(m0_stob_id_get(obj)), io->si_opcode, io, tx);
 	//stob_io_addb2_add_and_push(M0_AVI_STOB_IO_PREPARE, io, obj);
