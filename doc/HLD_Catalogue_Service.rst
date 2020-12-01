@@ -14,5 +14,78 @@ Catalogue service (cas) is a Motr service exporting key-value catalogues (indice
 
 Catalogues are used by other Motr sub-systems, to store and access meta-data. Distributed meta-data storage is implemented on top of cas.
 
+************
+Definitions
+************
+
+- catalogue: a container for records. A catalogue is explicitly created and deleted by a user and has an identifier, assigned by the user;
+
+- record: a key-value pair;
+
+- key: an arbitrary sequence of bytes, used to identify a record in a catalogue;
+
+- value: an arbitrary sequence of bytes, associated with a key; 
+
+- key order: total order, defined on keys within a given container. Iterating through the container, returns keys in this order. The order is defined as lexicographical order of keys, interpreted as bit-strings.
+
+- user: any Motr component or external application using a cas instance by sending fops to it.
+
+**************
+Requirements
+**************
+
+- [r.cas.persistency]: modifications to catalogues are stored persistently;
+
+- [r.cas.atomicity]: operations executed as part of particular cas fop are atomic w.r.t. service failures. If the service crashes and restarts, either all or none modifications are visible to the future queries;
+
+- [r.cas.efficiency]: complexity of catalogue query and modification is logarithmic in the number of records in the catalogue;
+
+- [r.cas.vectored]: cas operations are vectored. Multiple records can be queried or updated by the same operation;
+
+- [r.cas.scatter-gather-scatter]: input and output parameters (keys and values) of an operation are provided by the user in arbitrary vectored buffers to avoid data-copy;
+
+- [r.cas.creation]: there is an operation to create and delete a catalogue with user provided identifier;
+
+- [r.cas.identification]: a catalogue is uniquely identified by a non-reusable 120-bit identifier;
+
+- [r.cas.fid]: catalogue identifier, together with a fixed 8-bit prefix form the catalogue fid;
+
+- [r.cas.unique-keys]: record keys are unique within a given catalogue;
+
+- [r.cas.variable-size-keys]: keys with different sizes are supported;
+
+- [r.cas.variable-size-values]: values with different sizes are supported;
+
+- [r.cas.locality]: the implementation guarantees that spatial (in key order) together with temporal locality of accesses to the same catalogue is statistically optimal. That is, consecutive access to records with close keys is more efficient than random access;
+
+- [r.cas.cookies]: a service returns to the user an opaque cookie together with every returned record, plus a cookie for a newly inserted record. This cookie is optionally passed by the user (along with the key) to later access the same record. The cookie might speed up the access.
+
+******************
+Design Highlights
+******************
+
+A catalogue, exported by cas is local: records of the catalogue are stored in the meta-data back-end (BE) in the instance where cas is running. A catalogue is implemented as a BE b-tree. New fid type is registered for catalogue fids.
+
+*************************
+Functional Specification
+*************************
+
+Catalogue service introduces and accepts the following fop types:
+
+- CREATE: create a catalogue, given user-supplied fid and flags;
+
+- DELETE: delete a catalogue, given its fid. All records are deleted from the catalogue;
+
+In addition, there are fops for operations on catalogues, which all take catalogue fid as a parameter.
+
+- PUT: given a vector of records, insert each record in the catalogue, or update its value if the record with such key already exists;
+
+- GET: given a vector of keys, lookup and return the vector of matching values, together with indicators for the missing keys;
+
+- DEL: given a vector of keys, delete the matching records from the catalogue;
+
+- NEXT: given a vector of keys, lookup next N (in the ascending key order) records for each key and return them.
+
+
 
 
