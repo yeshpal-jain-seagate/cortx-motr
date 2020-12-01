@@ -123,6 +123,14 @@ This sub-section describes details of cas fop execution. Cookies, described in t
 |CREATE                  |cfid                                    |rc                                      |
 +------------------------+----------------------------------------+----------------------------------------+
 
+Allocate and initialise new catalogue object and insert it in the meta-catalogue, using cfid as the key. If a catalogue with such key already exists, return -EEXIST to the user. In either case return the cookie of the catalogue to the user.
+
++--------------------+----------------------+-------------------------------+
+|DELETE              |cfid                  |rc                             |
++--------------------+----------------------+-------------------------------+
+
+The problem with delete is that deletion of a catalogue with a large number of records might require more meta-data updates than can fit in a single transaction. Because of this a technique similar to handling of truncates for open-unlinked files in a POSIX file system is used.
+
 
 
 
