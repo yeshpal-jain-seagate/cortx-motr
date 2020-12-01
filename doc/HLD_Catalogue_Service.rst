@@ -86,6 +86,43 @@ In addition, there are fops for operations on catalogues, which all take catalog
 
 - NEXT: given a vector of keys, lookup next N (in the ascending key order) records for each key and return them.
 
+**********************
+Logical Specification
+**********************
+
+Service
+========
+
+Catalogue service is implemented as a standard request handler service. Catalogue service instance startup is regulated by configuration. Each catalogue is assigned a locality, based on some hash of catalogue fid. cas foms, created to process operations on a catalogue, are executed in the locality assigned to this catalogue. Multiple foms operating on the same catalogue are synchronised by a fom-long-lock, associated with the catalogue.
+
+Meta-catalogue
+===============
+
+Catalogue service instance maintains a meta-catalogue, where all catalogues (possibly including the meta-catalogue) are listed. The meta-catalogue is created when the storage is formatted for the service. The fid of the meta-catalogue is exported to the users together with formats of meta-catalogue keys and values, so that the users can query the meta-catalogue to find existing catalogues, subject to access control restrictions. Direct modifications of the meta-catalogue by the users are not allowed, the meta-catalogue is updated as a result of CREATE and DELETE operations. When a new catalogue is created, its cookie, which is the address of the root of the catalogue b-tree is passed to the client and can be used to bypass meta-catalogue lookup on the following operations on the catalogue.
+
+BE Interaction
+===============
+
+A catalogue (including the meta-catalogue) is implemented as a BE b-tree. Keys and values in the b-tree are supplied by the cas users. Keys are treated as bit-strings for the purpose of ordering. In other words, memcmp(3) can be used as key comparison function and variable length keys compare as if right-padded with zeroes. Operations in cas fops are vectored. In the first version of the implementation, operation in a fop is translated in a sequence of BE b-tree calls executed in the loop. In any case all operations from a given fop are executed in the same BE transaction.
+
+Cookies
+========
+
+When a cas instance looks up or creates a record on behalf of a user, it constructs a special cookie and returns it to the user. To operate on the same record (e.g., to delete it or update its value), the user passes this cookie back to the service along with the record key. The cookie is used to speed up access to the record. Similar cookies are used for catalogues, which are records in the meta-catalogue.
+
+The implementation and semantics of cookies are internal to the service. To a user, a cookie is an array of bytes. One possible implementation strategy for cookies is based on m0_cookie interface. The service might create m0_cookie for the b-tree leaf, in which the record resides. When this cookie is received from the user, it is dereferenced to reach the leaf node directly bypassing top-down tree traversal. The dereference might fail, because due to tree re-balancing the leaf node can be freed, or the record in question can be moved out of the node. In this case, the tree is traversed top-down.
+
+File Operation Packets
+=======================
+
+This sub-section describes details of cas fop execution. Cookies, described in the previous sub-section are omitted from fop parameters.
+
++------------------------+----------------------------------------+----------------------------------------+
+|fop type                |input parameters (request fop fields)   |output parameters (reply fields)        |
++------------------------+----------------------------------------+----------------------------------------+
+|CREATE                  |cfid                                    |rc                                      |
++------------------------+----------------------------------------+----------------------------------------+
+
 
 
 
