@@ -3,8 +3,9 @@ Description=huey consumer service
 
 [Service]
 Type=simple
+Restart=always
 WorkingDirectory=/root/perfline/perfline
-ExecStart=/usr/local/bin/huey_consumer perfline.huey -k process
+ExecStart=/usr/bin/bash /root/perfline/perfline/run_pl
 
 [Install]
 WantedBy=multi-user.target
