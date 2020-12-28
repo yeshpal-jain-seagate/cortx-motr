@@ -74,6 +74,8 @@ function cleanup_hare() {
 function cleanup_pcs() {
     echo "Remove /var/motr/s3server*"
     pdsh -S -w $NODES 'rm -rf /var/motr/s3server*' || true
+    pdsh -S -w $NODES 'rm -rf /var/log/seagate/motr/*' || true
+    pdsh -S -w $NODES 'rm -rf /var/log/seagate/s3/s3server-*' || true
 
     local ioservice_list=$(hctl status \
         | grep ioservice | sed 's/\[.*\]//' | awk '{print $2}')
@@ -94,16 +96,22 @@ function cleanup_cluster() {
 }
 
 function restart_hare() {
-    hctl bootstrap --mkfs /var/lib/hare/cluster.yaml
+    if [[ -n "$MKFS" ]]; then
+        hctl bootstrap --mkfs /var/lib/hare/cluster.yaml
+    else
+        hctl bootstrap /var/lib/hare/cluster.yaml
+    fi
 }
 
 function restart_pcs() {
-    ssh srvnode-1 'systemctl start motr-mkfs@0x7200000000000001:0xc'
-    ssh srvnode-2 'systemctl start motr-mkfs@0x7200000000000001:0x55'
+    if [[ -n "$MKFS" ]]; then
+        ssh srvnode-1 'systemctl start motr-mkfs@0x7200000000000001:0xc'
+        ssh srvnode-2 'systemctl start motr-mkfs@0x7200000000000001:0x55'
+    fi
+
     pcs resource enable motr-ios-c{1,2}
-    sleep 10
     pcs resource enable s3server-c{1,2}-{1,2,3,4,5,6,7,8,9,10,11}
-    sleep 30
+    wait_for_cluster_start
 }
 
 function restart_cluster() {
@@ -113,6 +121,38 @@ function restart_cluster() {
 	"hare") restart_hare ;;
 	"pcs") restart_pcs ;;
     esac
+}
+
+function wait_for_cluster_start() {
+
+    echo "wait for cluster start"
+
+    while ! is_cluster_online
+    do
+#        if _check_is_cluster_failed; then
+#            _err "cluster is failed"
+#            exit 1
+#        fi
+#
+        sleep 5
+    done
+
+    $EX_SRV $SCRIPT_DIR/wait_s3_listeners.sh 11
+
+}
+
+function is_cluster_online() {
+    local all_services=$(hctl status | grep "\s*\[.*\]")
+
+    local srvc_states=$(echo "$all_services" | grep -E 's3server|ioservice|confd|hax' | awk '{print $1}')
+    
+    for state in $srvc_states; do
+        if [[ "$state" != "[started]" ]]; then
+            return 1
+        fi
+    done
+
+    return 0
 }
 
 function run_workloads()
@@ -190,7 +230,7 @@ function save_s3srv_artifacts() {
         pushd $srv
 
         # Fetch list of folders per server
-        dirs=`ssh $srv -T "ls /var/motr/ | grep s3server | xargs -n1 basename"`
+        dirs=`ssh $srv -T "ls /var/log/seagate/motr/ | grep s3server | xargs -n1 basename"`
         echo $dirs
         mkdir $dirs
 
@@ -358,8 +398,10 @@ function main() {
 	cleanup_cluster
 	
 	# Restart cluster -- do mkfs, whatever...
-	restart_cluster
+#	restart_cluster
     fi
+
+    restart_cluster
 
     # Create artifacts folder
     create_results_dir
@@ -371,7 +413,7 @@ function main() {
 
     # Start workload time execution measuring
     start_measuring_workload_time
-
+    
     # Start workload
     run_workloads
 
@@ -391,6 +433,7 @@ function main() {
     # 	# Stop cluster
     # 	stop_cluster
     # fi
+stop_cluster
 
     # Collect ADDBs/m0traces/m0play.db
     collect_artifacts
@@ -405,7 +448,7 @@ function main() {
 
     stop_measuring_test_time
     
-    generate_report
+#    generate_report
 
     # Close results dir
     close_results_dir
