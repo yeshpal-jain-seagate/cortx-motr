@@ -79,29 +79,36 @@ parse_params()
 
 function process_motr_addb()
 {
+
     for ios_fid in $IO_SERVICES; do
-        local ios_dir="/var/motr/m0d-$ios_fid"
-        local ios_addb_stob="$ios_dir/addb-stobs/o/100000000000000:2"
-        local pid=$(echo $ios_addb_stob | sed -E 's/.*[x]([a-z0-9]*)[/].*/\1/')
 
-        if [[ -e $ios_addb_stob ]]; then
-            pushd $ios_dir/addb-stobs/o/
-            /home/721080/EOS-8613/cortx-motr/utils/m0addb2dump -f -s $START_TIME -e $STOP_TIME -- "$ios_addb_stob" > ./dumps_${pid}.txt
-            scp dumps_* root@${ARTIF_HOST}:${ARTIF_DIR}
-            generate_m0playdb dumps_${pid}.txt $pid root@${ARTIF_HOST}:${ARTIF_DIR}
+       local ios_dir="/var/log/seagate/motr/addb/m0d-$ios_fid"
 
-            ls ./
-            popd
-        fi
+       if [[ ! -d "$ios_dir" ]]; then
+           continue
+       fi
+
+       local ios_addb_stobs="$ios_dir/addb-stobs-*/o/100000000000000:2" 
+
+       for addb_stob in $ios_addb_stobs; do
+
+           pushd $(dirname $addb_stob)
+           pid=$(echo $addb_stob | sed -E 's/.*addb-stobs-([0-9]+)[/].*/\1/')
+           m0addb2dump -f -- "$addb_stob" > ./dumps_${pid}.txt
+           scp dumps_* root@${ARTIF_HOST}:${ARTIF_DIR}
+           generate_m0playdb dumps_${pid}.txt $pid root@${ARTIF_HOST}:${ARTIF_DIR}
+           popd
+
+       done
     done
 }
 
 function process_s3_addb()
 {
-    for addb_stob in /var/motr/s3server*/addb*/o/100000000000000:2; do
+    for addb_stob in /var/log/seagate/motr/s3server*/addb*/o/100000000000000:2; do
         pushd $(dirname $addb_stob)
         pid=$(echo $addb_stob | sed -E 's/.*addb_([0-9]+)[/].*/\1/')
-        /home/721080/EOS-8613/cortx-motr/utils/m0addb2dump -f -s $START_TIME -e $STOP_TIME -p /opt/seagate/cortx/s3/addb-plugin/libs3addbplugin.so \
+        m0addb2dump -f -p /opt/seagate/cortx/s3/addb-plugin/libs3addbplugin.so \
             -- "$addb_stob" > ./dumpc_${pid}.txt
         scp dumpc_* root@${ARTIF_HOST}:${ARTIF_DIR}/$(hostname)
         generate_m0playdb dumpc_${pid}.txt $pid root@${ARTIF_HOST}:${ARTIF_DIR}/$(hostname)
