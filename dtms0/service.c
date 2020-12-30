@@ -98,6 +98,7 @@ M0_INTERNAL void m0_dtms0_svc_init(void)
 	m0_sm_conf_extend(m0_generic_conf.scf_state, dtms0_fom_phases,
 			  m0_generic_conf.scf_nr_states);
 	m0_sm_conf_trans_extend(&m0_generic_conf, &dtms0_sm_conf);
+	dtms0_fom_phases[M0_FOPH_INIT].sd_allowed |= M0_BITS(DTMS0_CHECK);
 
 	m0_sm_conf_init(&dtms0_sm_conf);
 	m0_reqh_service_type_register(&m0_dtms0_service_type);
@@ -475,10 +476,14 @@ static const struct m0_fom_type_ops dtms0_fom_type_ops = {
 static struct m0_sm_state_descr dtms0_fom_phases[] = {
 	[DTMS0_CHECK] = {
 		.sd_name      = "dtms0-check-phase",
-		.sd_allowed   = M0_BITS(DTMS0_DONE, M0_FOPH_INIT, M0_FOPH_FAILURE)
+		.sd_allowed   = M0_BITS(M0_FOPH_INIT, M0_FOPH_FAILURE)
 	},
 	[DTMS0_PREPARE] = {
 		.sd_name      = "dtms0-prepare-phase",
+		.sd_allowed   = M0_BITS(DTMS0_EXEC, M0_FOPH_FAILURE)
+	},
+	[DTMS0_EXEC] = {
+		.sd_name      = "dtms0-exec-phase",
 		.sd_allowed   = M0_BITS(DTMS0_DONE, M0_FOPH_FAILURE)
 	},
 	[DTMS0_DONE] = {
@@ -488,26 +493,15 @@ static struct m0_sm_state_descr dtms0_fom_phases[] = {
 };
 
 static struct m0_sm_trans_descr dtms0_fom_trans[] = {
-	[ARRAY_SIZE(m0_generic_phases_trans)] = {
-		"dtms0-check-prepare",
-		M0_FOPH_INIT,
-		DTMS0_CHECK
-	},
-	[DTMS0_CHECK] = {
-		"dtms0-check-triggered",
-		 DTMS0_CHECK,
-		 M0_FOPH_INIT
-	},
-	[DTMS0_PREPARE] = {
-		"dtms0-prepare-triggered",
-		 DTMS0_PREPARE,
-		 DTMS0_DONE
-	},
-	[DTMS0_DONE] = {
-		"dtms0-done-triggered",
-		 DTMS0_DONE,
-		 M0_FOPH_SUCCESS
-	},
+	[ARRAY_SIZE(m0_generic_phases_trans)] =
+	{ "dtms0-check", M0_FOPH_INIT, DTMS0_CHECK },
+	{ "dtms0-check-triggered", DTMS0_CHECK, M0_FOPH_INIT },
+	{ "dtms0-check-failed", DTMS0_CHECK, M0_FOPH_FAILURE },
+	{ "dtms0-prepare-triggered", DTMS0_PREPARE, DTMS0_EXEC },
+	{ "dtms0-prepared-failed", DTMS0_PREPARE, M0_FOPH_FAILURE },
+	{ "dtms0-exec-triggered", DTMS0_EXEC, DTMS0_DONE },
+	{ "dtms0-exec-failed", DTMS0_EXEC, M0_FOPH_FAILURE },
+	{ "dtms0-done-triggered", DTMS0_DONE, M0_FOPH_SUCCESS },
 };
 
 static struct m0_sm_conf dtms0_sm_conf = {
