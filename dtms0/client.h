@@ -23,7 +23,7 @@ struct m0_rpc_session;
  *
  * @{
  *
- * DTMS0 client provides an interface to send dtm opeartions to DTMS0 service.
+ * DTMS0 client provides an interface to send dtm operations to DTMS0 service.
  * Available:
  * - m0_dtms0_dtx()
  * - m0_dtms0_execute()
