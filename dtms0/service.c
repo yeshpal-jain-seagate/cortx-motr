@@ -200,7 +200,7 @@ static int dtms0_fom_create(struct m0_fop *fop,
 	if (fom != NULL && repfop != NULL) {
 		*out = fom0 = &fom->df_fom;
 		repdata = m0_fop_data(repfop);
-		repdata->dr_rc = 0;
+		repdata->dtr_rc = 0;
 		m0_fom_init(fom0, &fop->f_type->ft_fom_type,
 			    &dtms0_fom_ops, fop, repfop, reqh);
 		m0_long_lock_link_init(&fom->df_lock, fom0, NULL);
@@ -223,7 +223,7 @@ static int dtms0_op_exec(struct dtms0_fom          *fom,
 	M0_ENTRY("fom %p, op %p, opc %d", fom, op, opc);
 
 	if (!dtms0_is_valid(fom, opc)) {
-		rep->dr_rc = EINVAL;
+		rep->dtr_rc = EINVAL;
 		return M0_FSO_AGAIN;
 	}
 
@@ -234,11 +234,7 @@ static int dtms0_op_exec(struct dtms0_fom          *fom,
 	/* Else do the actual work. */
 
 	switch (opc) {
-	case DT_DTX:
-		break;
-	case DT_EXECUTE:
-		break;
-	case DT_PERSISTENT:
+	case DT_REQ:
 		break;
 	case DT_REDO:
 		break;
@@ -264,8 +260,8 @@ static void dtms0_fom_failure(struct dtms0_fom *fom, int rc)
 	M0_PRE(rc < 0);
 
 	repdata = m0_fop_data(fom->df_fom.fo_rep_fop);
-	memset(&repdata->dr_rep, 0, sizeof(repdata->dr_rep));
-	repdata->dr_rc = rc;
+	memset(&repdata->dtr_rep, 0, sizeof(repdata->dtr_rep));
+	repdata->dtr_rc = rc;
 
 	dtms0_fom_cleanup(fom);
 	m0_fom_phase_move(&fom->df_fom, rc, M0_FOPH_FAILURE);
@@ -378,7 +374,17 @@ M0_INTERNAL int dtms0_op_rc(struct m0_dtms0_op *dtms0_op)
 
 	if (M0_FI_ENABLED("ut-failure"))
 		return M0_ERR(-ENOMEM);
-	return M0_RC(dtms0_op->dt_rc);
+	return M0_RC(dtms0_op->dto_rc);
+}
+
+static enum m0_dtms0_opcode dtms0_opcode(const struct m0_fop *fop0)
+{
+	struct m0_dtms0_op *op = m0_fop_data(fop0);
+	enum m0_dtms0_opcode opcode;
+
+	opcode = op->dto_opcode;
+	M0_ASSERT(0 <= opcode && opcode < DT_NR);
+	return opcode;
 }
 
 static int dtms0_op_check(struct m0_dtms0_op *op,
@@ -386,7 +392,7 @@ static int dtms0_op_check(struct m0_dtms0_op *op,
 			bool              is_index_drop)
 {
 	struct m0_fom              *fom0	= &fom->df_fom;
-	enum m0_dtms0_opcode        opc		= dtms0_opcode(fom0->fo_fop);
+	enum m0_dtms0_opcode      opc		= dtms0_opcode(fom0->fo_fop);
 	struct m0_dtms0_op         *dt_op	= &fom->df_op;
 	int                         rc		= 0;
 
@@ -401,25 +407,12 @@ static int dtms0_op_check(struct m0_dtms0_op *op,
 	return rc;
 }
 
-
-static enum m0_dtms0_opcode dtms0_opcode(const struct m0_fop *fop0)
-{
-	struct m0_dtms0_op *fop = m0_fop_data(fop0);
-	enum m0_dtms0_opcode opcode;
-
-	opcode = fop->dt_opcode;
-	M0_ASSERT(0 <= opcode && opcode < DT_NR);
-	return opcode;
-}
-
 static bool dtms0_is_valid(struct dtms0_fom *fom, enum m0_dtms0_opcode opc)
 {
 	bool result;
 
 	switch (opc) {
-	case DT_DTX:
-	case DT_EXECUTE:
-	case DT_PERSISTENT:
+	case DT_REQ:
 	case DT_REDO:
 	case DT_REPLY:
 		result = true;
@@ -434,7 +427,7 @@ static bool dtms0_is_valid(struct dtms0_fom *fom, enum m0_dtms0_opcode opc)
 static void dtms0_prep(struct dtms0_fom *fom)
 {
 	struct m0_fom    *fom0   = &fom->df_fom;
-	uint32_t          flags  = dtms0_op(fom0)->dt_opflags;
+	uint32_t          flags  = dtms0_op(fom0)->dto_opflags;
 
 	M0_ENTRY("dtms0_fom=%p, flags=%d", fom, flags);
 	M0_LEAVE();
@@ -452,10 +445,10 @@ M0_INTERNAL void m0_dtms0_op_fini(struct m0_dtms0_op *dtms0_fop)
 static int dtms0_done(struct dtms0_fom *fom, struct m0_dtms0_op *op,
 		    struct m0_dtms0_rep *rep, enum m0_dtms0_opcode opc)
 {
-	int op_rc = fom->df_op.dt_rc;
+	int op_rc = fom->df_op.dto_rc;
 	int rc;
 
-	rc = (op_rc == 0)? rep->dr_rc : op_rc;
+	rc = (op_rc == 0)? rep->dtr_rc : op_rc;
 
 	M0_LOG(M0_DEBUG, "fom %p, fop %p, rep %p, opcode %d, rc %d",
 			fom, op, rep, opc, rc);
@@ -496,13 +489,13 @@ static struct m0_sm_trans_descr dtms0_fom_trans[] = {
 	[ARRAY_SIZE(m0_generic_phases_trans)] =
 	{ "dtms0-check", M0_FOPH_INIT, DTMS0_CHECK },
 	{ "dtms0-check-triggered", DTMS0_CHECK, M0_FOPH_INIT },
-	{ "dtms0-check-failed", DTMS0_CHECK, M0_FOPH_FAILURE },
-	{ "dtms0-prepare-triggered", DTMS0_PREPARE, DTMS0_EXEC },
-	{ "dtms0-prepared-failed", DTMS0_PREPARE, M0_FOPH_FAILURE },
-	{ "dtms0-exec-triggered", DTMS0_EXEC, DTMS0_DONE },
-	{ "dtms0-exec-failed", DTMS0_EXEC, M0_FOPH_FAILURE },
-	{ "dtms0-done-triggered", DTMS0_DONE, M0_FOPH_SUCCESS },
-};
+ 	{ "dtms0-check-failed", DTMS0_CHECK, M0_FOPH_FAILURE },
+ 	{ "dtms0-prepare-triggered", DTMS0_PREPARE, DTMS0_EXEC },
+ 	{ "dtms0-prepared-failed", DTMS0_PREPARE, M0_FOPH_FAILURE },
+ 	{ "dtms0-exec-triggered", DTMS0_EXEC, DTMS0_DONE },
+ 	{ "dtms0-exec-failed", DTMS0_EXEC, M0_FOPH_FAILURE },
+ 	{ "dtms0-done-triggered", DTMS0_DONE, M0_FOPH_SUCCESS },
+ };
 
 static struct m0_sm_conf dtms0_sm_conf = {
 	.scf_name      = "dtms0-fom",

@@ -4,6 +4,8 @@
  * Original creation date: 26/07/2020
  */
 
+#include "lib/types.h"
+#include "linux/types.h"
 #include "rpc/rpc_opcodes.h"
 #define M0_TRACE_SUBSYSTEM M0_TRACE_SUBSYS_DTMS0
 
@@ -71,11 +73,9 @@ struct m0_sm_conf dtms0_req_sm_conf = {
 };
 
 static const char * DTMS0_OP_STR[] = {
-	 "DTMS0 DTX RECORD",
-	 "DTMS0 EXECUTE RECORD",
-	 "DTMS0 PERSISTENT RECORD",
-	 "DTMS0 REDO RECORD",
-	 "DTMS0 REPLY RECORD"
+	 "DTMS0 DTX REQUEST",
+	 "DTMS0 DTX REPLY",
+	 "DTMS0 DTX REQUEST REDO"
 };
 
 static int dreq_op_alloc(struct m0_dtms0_op **out,
@@ -98,12 +98,11 @@ static int dreq_op_alloc(struct m0_dtms0_op **out,
 	}
 	M0_SET0(buf);
 
-	op->dt_data = buf;
-	op->dt_size = size;
-	op->dt_id = 0;
+	op->dto_data = buf;
+	op->dto_size = size;
 
-	op->dt_opcode = oc;
-	op->dt_opflags = of;
+	op->dto_opcode = oc;
+	op->dto_opflags = of;
 
 	*out = op;
 	return M0_RC(0);
@@ -112,7 +111,7 @@ static int dreq_op_alloc(struct m0_dtms0_op **out,
 static void dreq_op_free(struct m0_dtms0_op *op)
 {
 	if (op != NULL) {
-		m0_free(op->dt_data);
+		m0_free(op->dto_data);
 		m0_free(op);
 	}
 }
@@ -263,8 +262,7 @@ static int dreq_fop_create_and_prepare(struct m0_dtms0_req     *req,
 	if (rc == 0) {
 		*next_state = DTMS0REQ_SENT;
 		/*
-		 * Check whether original fop payload does not exceed
-		 * max rpc item payload.
+		 * Check that fop payload does not exceed max rpc item payload.
 		 */
 		if (m0_rpc_item_max_payload_exceeded(
 			    &req->dr_fop->f_item,
@@ -315,8 +313,7 @@ static int dtms0_rep__validate(const struct m0_fop_type *ftype,
 			     struct m0_dtms0_op         *op,
 			     struct m0_dtms0_rep        *rep)
 {
-	M0_ASSERT(M0_IN(ftype, (&dtms0_dtx_fopt, &dtms0_dtx_execute_fopt,
-				&dtms0_dtx_persistent_fopt, &dtms0_dtx_redo_fopt)));
+	M0_ASSERT(M0_IN(ftype, (&dtms0_dtx_req_fopt, &dtms0_dtx_rep_fopt, &dtms0_dtx_redo_req_fopt)));
 	return M0_RC(0);
 }
 
@@ -326,7 +323,7 @@ static int dtms0_rep_validate(const struct m0_dtms0_req *req)
 	struct m0_dtms0_op    *op = m0_fop_data(rfop);
 	struct m0_dtms0_rep   *rep = dtms0_rep(dtms0_req_to_item(req)->ri_reply);
 
-	return rep->dr_rc ?: dtms0_rep__validate(rfop->f_type, op, rep);
+	return rep->dtr_rc ?: dtms0_rep__validate(rfop->f_type, op, rep);
 }
 
 static void dtms0_req_failure(struct m0_dtms0_req *req, int32_t rc)
@@ -407,7 +404,7 @@ static int dtms0_req_reply_handle(struct m0_dtms0_req *req)
 
 	M0_ASSERT(req_fop->f_type == req->dr_ftype);
 
-	rc = rep->dr_rc;
+	rc = rep->dtr_rc;
 
 	m0_fop_put_lock(req_fop);
 	req->dr_fop = NULL;
@@ -447,7 +444,9 @@ static void dtms0_req_replied_cb(struct m0_rpc_item *item)
 
 static int dtms0_op_prepare(struct m0_dtms0_op **out,
 			    uint32_t             opcode,
-			    uint32_t             flags)
+			    uint32_t             flags,
+			    uint32_t		 size,
+			    void		*data)
 {
 	struct m0_dtms0_op  *op;
 	int                  rc;
@@ -457,7 +456,8 @@ static int dtms0_op_prepare(struct m0_dtms0_op **out,
 	rc = dreq_op_alloc(&op, 1024, opcode, flags);
 	if (rc != 0)
 		return M0_ERR(rc);
-	snprintf(op->dt_data, 1023, "request contains %s data", DTMS0_OP_STR[opcode]);
+	op->dto_size = size;
+	op->dto_data = data;
 	*out = op;
 	return M0_RC(rc);
 }
@@ -465,23 +465,23 @@ static int dtms0_op_prepare(struct m0_dtms0_op **out,
 static int dtms0_req_prepare(struct m0_dtms0_req  *req,
 			     struct m0_dtms0_op  **out,
 			     uint32_t              opcode,
+			     uint32_t              size,
+			     void *		   data,
 			     uint32_t              flags)
 {
 	int                  rc;
 	struct m0_dtms0_op  *op;
-	struct m0_dtms0_rep *reply;
+	char msg[1024] = "";
 
-	rc = dtms0_op_prepare(&op, opcode, flags);
+	snprintf(msg, 1023, "request contains %s data", DTMS0_OP_STR[opcode]);
+	rc = dtms0_op_prepare(&op, opcode, flags, strlen(msg), msg);
 	if (rc != 0)
 		return M0_RC(rc);
 
-	M0_SET0(req);
-	reply = &req->dr_reply;
-	reply->dr_rc = 0;
+	req->dr_op = op;
 
 	*out = op;
 	return M0_RC(rc);
-
 }
 
 M0_INTERNAL int m0_dtms0_req_wait(struct m0_dtms0_req *req, uint64_t states,
@@ -501,10 +501,11 @@ M0_INTERNAL int m0_dtms0_dtx(struct m0_dtms0_req *req)
 	M0_ENTRY();
 	M0_PRE(req->dr_sess != NULL);
 	M0_PRE(m0_dtms0_req_is_locked(req));
-	rc = dtms0_req_prepare(req, &op, DT_DTX, DOF_NONE);
+	rc = dtms0_req_prepare(req, &op, DT_REQ, strlen("DT_REQ: Message type DMT_EXECUTE_DTX")+1,
+			       "DT_REQ: Message type DMT_EXECUTE_DTX", DOF_NONE);
 	if (rc != 0)
 		return M0_ERR(rc);
-	rc = dreq_fop_create_and_prepare(req, &dtms0_dtx_fopt, op, &next_state);
+	rc = dreq_fop_create_and_prepare(req, &dtms0_dtx_req_fopt, op, &next_state);
 	if (rc == 0) {
 		dtms0_fop_send(req);
 		dtms0_req_state_set(req, next_state);
@@ -516,112 +517,14 @@ static void dtms0_rep_copy(const struct m0_dtms0_req *req,
 			 struct m0_dtms0_rep	     *reply)
 {
 	struct m0_dtms0_rep  *rep = dtms0_rep(m0_fop_to_rpc_item(req->dr_fop));
-	reply->dr_rc = rep->dr_rc;
+	reply->dtr_rc = rep->dtr_rc;
 }
 
 M0_INTERNAL void m0_dtms0_dtx_reply(const struct m0_dtms0_req *req,
 					 struct m0_dtms0_rep *rep)
 {
 	M0_ENTRY();
-	M0_PRE(req->dr_ftype == &dtms0_dtx_fopt);
-	dtms0_rep_copy(req, rep);
-	M0_LEAVE();
-}
-
-M0_INTERNAL int m0_dtms0_execute(struct m0_dtms0_req    *req,
-			     struct m0_dtx          *dtx,
-			     uint32_t                flags)
-{
-	struct m0_dtms0_op      *op;
-	enum m0_dtms0_req_state  next_state;
-	int                      rc;
-
-	M0_ENTRY();
-	M0_PRE(m0_dtms0_req_is_locked(req));
-
-	(void)dtx;
-	rc = dtms0_req_prepare(req, &op, DT_EXECUTE, DOF_NONE);
-	if (rc != 0)
-		return M0_ERR(rc);
-	rc = dreq_fop_create_and_prepare(req, &dtms0_dtx_execute_fopt, op, &next_state);
-	if (rc == 0) {
-		dtms0_fop_send(req);
-		dtms0_req_state_set(req, next_state);
-	}
-	return M0_RC(rc);
-}
-
-M0_INTERNAL void m0_dtms0_execute_reply(struct m0_dtms0_req	*req,
-				  struct m0_dtms0_rep *rep)
-{
-	M0_ENTRY();
-	M0_PRE(req->dr_ftype == &dtms0_dtx_execute_fopt);
-	dtms0_rep_copy(req, rep);
-	M0_LEAVE();
-}
-
-M0_INTERNAL int m0_dtms0_persistent(struct m0_dtms0_req *req,
-			   struct m0_dtx     *dtx,
-			   uint32_t           flags)
-{
-	struct m0_dtms0_op      *op;
-	enum m0_dtms0_req_state  next_state;
-	int                    rc;
-
-	M0_ENTRY();
-	M0_PRE(m0_dtms0_req_is_locked(req));
-	M0_PRE(M0_IN(flags, (0, DOF_NONE, DOF_SYNC_WAIT)));
-
-	(void)dtx;
-	rc = dtms0_req_prepare(req, &op, DT_PERSISTENT, DOF_NONE);
-	if (rc != 0)
-		return M0_ERR(rc);
-	rc = dreq_fop_create_and_prepare(req, &dtms0_dtx_persistent_fopt, op, &next_state);
-	if (rc == 0) {
-		dtms0_fop_send(req);
-		dtms0_req_state_set(req, next_state);
-	}
-	return M0_RC(rc);
-}
-
-M0_INTERNAL void m0_dtms0_persistent_reply(struct m0_dtms0_req *req,
-				  struct m0_dtms0_rep *rep)
-{
-	M0_ENTRY();
-	M0_PRE(req->dr_ftype == &dtms0_dtx_persistent_fopt);
-	dtms0_rep_copy(req, rep);
-	M0_LEAVE();
-}
-
-M0_INTERNAL int m0_dtms0_redo(struct m0_dtms0_req *req,
-			      struct m0_dtx     *dtx,
-			      uint32_t           flags)
-{
-	struct m0_dtms0_op      *op;
-	enum m0_dtms0_req_state  next_state;
-	int                    rc;
-
-	M0_ENTRY();
-	M0_PRE(m0_dtms0_req_is_locked(req));
-	M0_PRE(M0_IN(flags, (0, DOF_NONE, DOF_SYNC_WAIT)));
-
-	(void)dtx;
-	rc = dtms0_req_prepare(req, &op, DT_REDO, DOF_NONE);
-	if (rc != 0)
-		return M0_ERR(rc);
-	rc = dreq_fop_create_and_prepare(req, &dtms0_dtx_redo_fopt, op, &next_state);
-	if (rc == 0) {
-		dtms0_fop_send(req);
-		dtms0_req_state_set(req, next_state);
-	}
-	return M0_RC(rc);
-}
-
-M0_INTERNAL void m0_dtms0_redo_reply(struct m0_dtms0_req *req,
-				  struct m0_dtms0_rep *rep)
-{
-	M0_ENTRY();
-	M0_PRE(req->dr_ftype == &dtms0_dtx_redo_fopt);
+	M0_PRE(req->dr_ftype == &dtms0_dtx_req_fopt);
 	dtms0_rep_copy(req, rep);
 	M0_LEAVE();
 }

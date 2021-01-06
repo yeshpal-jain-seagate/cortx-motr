@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "linux/types.h"
 #ifndef __MOTR_DTMS0_CLIENT_H__
 #define __MOTR_DTMS0_CLIENT_H__
 
@@ -25,16 +26,14 @@ struct m0_rpc_session;
  *
  * DTMS0 client provides an interface to send dtm operations to DTMS0 service.
  * Available:
- * - m0_dtms0_dtx()
- * - m0_dtms0_execute()
- * - m0_dtms0_persistent()
- * - m0_dtms0_redo()
  */
 
 /** Possible DTMS0 request states. */
 enum m0_dtms0_req_state {
 	DTMS0REQ_INVALID,
 	DTMS0REQ_INIT,
+	DTMS0REQ_OPEN,
+	DTMS0REQ_CLOSE,
 	DTMS0REQ_SENT,
 	DTMS0REQ_FINAL,
 	DTMS0REQ_FAILURE,
@@ -49,7 +48,7 @@ struct m0_dtms0_req {
 	struct m0_sm            dr_sm;
 
 	/* Private fields. */
-	struct m0_dtms0_op	dr_op;
+	struct m0_dtms0_op     *dr_op;
 	struct m0_dtms0_rep     dr_reply;
 	/** FOP carrying op request. */
 	struct m0_fop          *dr_fop;
@@ -99,15 +98,6 @@ M0_INTERNAL int m0_dtms0_req_wait(struct m0_dtms0_req *req, uint64_t states,
 				  m0_time_t to);
 
 M0_INTERNAL int m0_dtms0_dtx(struct m0_dtms0_req *req);
-
-M0_INTERNAL int m0_dtms0_execute(struct m0_dtms0_req *req, struct m0_dtx *dtx,
-				 uint32_t flags);
-
-M0_INTERNAL int m0_dtms0_persistent(struct m0_dtms0_req *req, struct m0_dtx *dtx,
-				    uint32_t flags);
-
-M0_INTERNAL int m0_dtms0_redo(struct m0_dtms0_req *req, struct m0_dtx *dtx,
-			      uint32_t flags);
 
 M0_INTERNAL int  m0_dtms0_sm_conf_init(void);
 M0_INTERNAL void m0_dtms0_sm_conf_fini(void);
