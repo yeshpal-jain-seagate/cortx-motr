@@ -19,9 +19,7 @@
 
 /**
  * DTMS0 service registers following FOP types during initialisation:
- * - @ref dtms0_dtx_fopt
- * - @ref dtms0_dtx_execute_fopt
- * - @ref dtms0_dtx_persistent_fopt
+ * - @ref dtms0_dtx_req_fopt
  * - @ref dtms0_dtx_redo_fopt
  * - @ref dtms0_dtx_rep_fopt
  *
@@ -55,44 +53,49 @@ enum m0_dtms0_op_flags {
 * DTMS0 operation codes.
 */
 
-enum m0_dtms0_opcode {
-	DT_DTX,
-	DT_EXECUTE,
-	DT_PERSISTENT,
+enum m0_dtms0_opcode{
+	DT_REQ,
 	DT_REDO,
 	DT_REPLY,
 	DT_NR,
 } M0_XCA_ENUM;
 
+enum m0_dtms0_msg_type {
+	DMT_EXECUTE_DTX,
+	DMT_EXECUTED,
+	DMT_PERSISTENT,
+	DMT_REDO,
+	DMT_REPLY,
+	DMT_NR,
+} M0_XCA_ENUM;
+
 /**
- * DTMS0 fops.
+ * DTMS0 ops.
  */
+
 struct m0_dtms0_op {
-	uint64_t    dt_id;
-	int	    dt_rc;
-	uint32_t    dt_opcode;
-	uint32_t    dt_opflags;
-	uint32_t    dt_size;
-	void	   *dt_data;
+	int		    dto_rc;
+	uint32_t	    dto_opcode;
+	uint32_t	    dto_opflags;
+	uint32_t	    dto_size;
+	void		   *dto_data;
 } M0_XCA_RECORD M0_XCA_DOMAIN(rpc);
 
 /**
  * DTMS0 fops reply.
  */
 struct m0_dtms0_rep {
-	/** Status code of operation. */
-	int32_t		dr_rc;
+	/** Status code of dtm operation. */
+	int32_t		dtr_rc;
 	/** operation results. */
-	struct m0_buf	dr_rep;
+	struct m0_buf	dtr_rep;
 } M0_XCA_RECORD M0_XCA_DOMAIN(rpc);
 
 M0_EXTERN struct m0_reqh_service_type m0_dtms0_service_type;
 
-M0_EXTERN struct m0_fop_type dtms0_dtx_fopt;
-M0_EXTERN struct m0_fop_type dtms0_dtx_execute_fopt;
-M0_EXTERN struct m0_fop_type dtms0_dtx_persistent_fopt;
-M0_EXTERN struct m0_fop_type dtms0_dtx_redo_fopt;
+M0_EXTERN struct m0_fop_type dtms0_dtx_req_fopt;
 M0_EXTERN struct m0_fop_type dtms0_dtx_rep_fopt;
+M0_EXTERN struct m0_fop_type dtms0_dtx_redo_req_fopt;
 
 /**
  * Use stubs in kernel mode for service initialisation and deinitalisation.
