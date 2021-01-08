@@ -40,6 +40,23 @@ static int dtms0_fops_init(const struct m0_sm_conf           *sm_conf,
 			 .fom_ops   = fom_ops,
 			 .sm        = sm_conf,
 			 .svc_type  = svctype);
+
+	M0_FOP_TYPE_INIT(&dtms0_dtx_redo_req_fopt,
+			 .name      = "dtms0-redo-req-dtx",
+			 .opcode    = M0_DTMS0_DTX_REDO_REQ_OPCODE,
+			 .rpc_flags = M0_RPC_ITEM_TYPE_REQUEST,
+			 .xt        = m0_dtms0_op_xc,
+			 .fom_ops   = fom_ops,
+			 .sm        = sm_conf,
+			 .svc_type  = svctype);
+	M0_FOP_TYPE_INIT(&dtms0_dtx_rep_fopt,
+			 .name      = "dtms0-rep-dtx",
+			 .opcode    = M0_DTMS0_DTX_REP_OPCODE,
+			 .rpc_flags = M0_RPC_ITEM_TYPE_REQUEST,
+			 .xt        = m0_dtms0_op_xc,
+			 .fom_ops   = fom_ops,
+			 .sm        = sm_conf,
+			 .svc_type  = svctype);
 		return m0_fop_type_addb2_instrument(&dtms0_dtx_req_fopt)? :
 		       m0_fop_type_addb2_instrument(&dtms0_dtx_redo_req_fopt)? :
 		       m0_fop_type_addb2_instrument(&dtms0_dtx_rep_fopt);

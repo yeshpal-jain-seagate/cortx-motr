@@ -73,12 +73,17 @@ enum m0_dtms0_msg_type {
  * DTMS0 ops.
  */
 
+struct m0_dtms0_buf_desc {
+        uint32_t  dbd_len;
+        uint8_t  *dbd_data;
+} M0_XCA_SEQUENCE M0_XCA_DOMAIN(rpc);
+
 struct m0_dtms0_op {
-	int		    dto_rc;
-	uint32_t	    dto_opcode;
-	uint32_t	    dto_opflags;
-	uint32_t	    dto_size;
-	void		   *dto_data;
+	int			 dto_rc;
+	uint32_t		 dto_opcode;
+	uint32_t		 dto_opflags;
+	uint32_t		 dto_usedsize;
+	struct m0_dtms0_buf_desc dto_opdata;
 } M0_XCA_RECORD M0_XCA_DOMAIN(rpc);
 
 /**
