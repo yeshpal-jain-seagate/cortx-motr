@@ -105,16 +105,33 @@ void track_cob_btrees(struct m0_cob_domain *cdom, bool print_btree)
 				&cdom->cd_fileattr_ea);
 }
 
+static uint8_t reduce_64to8(uint64_t value)
+{
+	uint8_t idx;
+	idx = (uint8_t)(value % (uint64_t)(256));
+	M0_LOG(M0_ERROR,"Calculated=[0x%x]",idx);
+	return idx;
+}
+
 void track_ad_btrees(struct stob_ad_0type_rec *rec, bool print_btree)
 {
 	struct m0_balloc         *m0balloc;
 
 	m0balloc = container_of(rec->sa0_ad_domain->sad_ballroom,
 				struct m0_balloc, cb_ballroom);
+	
+	const struct m0_fid *fid = m0_stob_fid_get(rec->sa0_ad_domain->sad_bstore);
+	uint64_t				  prefix_hash;
+	uint8_t					  ht_key;
+
+	prefix_hash = m0_fid_hash(fid);
+	ht_key = reduce_64to8(prefix_hash);
+	M0_LOG(M0_ERROR,"KC ht_key = 0x%x ",ht_key);
+	M0_LOG(M0_ERROR, FID_F, FID_P(fid));
 
 	if (print_btree) {
 		M0_LOG(M0_ALWAYS, "em_mapping");
-		btree_dbg_print(&rec->sa0_ad_domain->sad_adata.em_mapping);
+		btree_dbg_print(&rec->sa0_ad_domain->sad_adata_ht[ht_key].sad_adata.em_mapping);
 		M0_LOG(M0_ALWAYS, "grp_exts");
 		btree_dbg_print(&m0balloc->cb_db_group_extents);
 		M0_LOG(M0_ALWAYS, "grp_dsc");
@@ -123,7 +140,7 @@ void track_ad_btrees(struct stob_ad_0type_rec *rec, bool print_btree)
 		M0_LOG(M0_ALWAYS,"M0_BE:AD em_mapping = %p"
 				 "cb_db_group_extents btree= %p "
 				 "cb_db_group_desc btree= %p",
-				 &rec->sa0_ad_domain->sad_adata.em_mapping,
+				 &rec->sa0_ad_domain->sad_adata_ht[ht_key].sad_adata.em_mapping,
 				 &m0balloc->cb_db_group_extents,
 				 &m0balloc->cb_db_group_desc);
 
