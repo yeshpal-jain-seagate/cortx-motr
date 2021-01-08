@@ -84,7 +84,7 @@ static int dreq_op_alloc(struct m0_dtms0_op **out,
 			 uint32_t	      of)
 {
 	struct m0_dtms0_op *op;
-	char *buf;
+	uint8_t *buf;
 
 	M0_ALLOC_PTR(op);
 	if (op == NULL)
@@ -98,8 +98,8 @@ static int dreq_op_alloc(struct m0_dtms0_op **out,
 	}
 	M0_SET0(buf);
 
-	op->dto_data = buf;
-	op->dto_size = size;
+	op->dto_opdata.dbd_data = buf;
+	op->dto_opdata.dbd_len = size;
 
 	op->dto_opcode = oc;
 	op->dto_opflags = of;
@@ -111,7 +111,7 @@ static int dreq_op_alloc(struct m0_dtms0_op **out,
 static void dreq_op_free(struct m0_dtms0_op *op)
 {
 	if (op != NULL) {
-		m0_free(op->dto_data);
+		m0_free(op->dto_opdata.dbd_data);
 		m0_free(op);
 	}
 }
@@ -456,8 +456,8 @@ static int dtms0_op_prepare(struct m0_dtms0_op **out,
 	rc = dreq_op_alloc(&op, 1024, opcode, flags);
 	if (rc != 0)
 		return M0_ERR(rc);
-	op->dto_size = size;
-	op->dto_data = data;
+	op->dto_opdata.dbd_data = data;
+	op->dto_opdata.dbd_len = size;
 	*out = op;
 	return M0_RC(rc);
 }
