@@ -19,31 +19,31 @@ MKFS=
 function validate() {
     local leave=
     if [[ -z "$RESULTS_DIR" ]]; then
-	echo "Result dir parameter is not passed"
-	leave="1"
+        echo "Result dir parameter is not passed"
+        leave="1"
     fi
 
     if [[ -z "$WORKLOADS" ]]; then
-	echo "Application workload is not specified"
-	leave="1"
+        echo "Application workload is not specified"
+        leave="1"
     fi
 
     if [[ -z "$NODES" ]]; then
-	echo "Nodes are not specified"
-	leave="1"
+        echo "Nodes are not specified"
+        leave="1"
     fi
 
     case $HA_TYPE in
-	"hare") echo "HA type: HARE" ;;
-	"pcs") echo "HA type: Pacemaker" ;;
-	*) 
-	    echo "Unknown HA type: $HA_TYPE"
-	    leave="1"
-	    ;;
+        "hare") echo "HA type: HARE" ;;
+        "pcs") echo "HA type: Pacemaker" ;;
+        *) 
+            echo "Unknown HA type: $HA_TYPE"
+            leave="1"
+            ;;
     esac
 
     if [[ -n $leave ]]; then
-	exit 1
+        exit 1
     fi
 }
 
@@ -61,26 +61,33 @@ function stop_cluster() {
     echo "Stop cluster"
 
     case $HA_TYPE in
-	"hare") stop_hare ;;
-	"pcs") stop_pcs ;;
+        "hare") stop_hare ;;
+        "pcs") stop_pcs ;;
     esac
 }
 
 function cleanup_hare() {
+    echo "Remove /var/log/seagate/motr/*"
+    pdsh -S -w $NODES 'rm -rf /var/log/seagate/motr/*' || true
+
     echo "Remove /var/motr/*"
     pdsh -S -w $NODES 'rm -rf /var/motr/*' || true
 }
 
 function cleanup_pcs() {
-    echo "Remove /var/motr/s3server*"
-    pdsh -S -w $NODES 'rm -rf /var/motr/s3server*' || true
-    pdsh -S -w $NODES 'rm -rf /var/log/seagate/motr/*' || true
-    pdsh -S -w $NODES 'rm -rf /var/log/seagate/s3/s3server-*' || true
+    echo "Remove /var/log/seagate/motr/s3server*"
+    pdsh -S -w $NODES 'rm -rf /var/log/seagate/motr/s3server*' || true
 
     local ioservice_list=$(hctl status \
         | grep ioservice | sed 's/\[.*\]//' | awk '{print $2}')
 
     echo "Remove ioservice(s)"
+    for ios_fid in $ioservice_list; do
+        local ios_dir="/var/log/seagate/motr/m0d-$ios_fid"
+        local srv_node_cmd="if [ -e $ios_dir ]; then rm -rf $ios_dir; fi"
+        $EX_SRV $srv_node_cmd
+    done
+
     for ios_fid in $ioservice_list; do
         local ios_dir="/var/motr/m0d-$ios_fid"
         local srv_node_cmd="if [ -e $ios_dir ]; then rm -rf $ios_dir; fi"
@@ -90,8 +97,8 @@ function cleanup_pcs() {
 
 function cleanup_cluster() {
     case $HA_TYPE in
-	"hare") cleanup_hare ;;
-	"pcs") cleanup_pcs ;;
+        "hare") cleanup_hare ;;
+        "pcs") cleanup_pcs ;;
     esac
 }
 
@@ -118,8 +125,8 @@ function restart_cluster() {
     echo "Restart cluster"
     
     case $HA_TYPE in
-	"hare") restart_hare ;;
-	"pcs") restart_pcs ;;
+        "hare") restart_hare ;;
+        "pcs") restart_pcs ;;
     esac
 }
 
@@ -166,11 +173,13 @@ function run_workloads()
         echo "workload $i"
         local cmd=${WORKLOADS[((i))]}
         eval $cmd | tee workload-$i.log
-	STATUS=${PIPESTATUS[0]}
+        STATUS=${PIPESTATUS[0]}
     done
 
     STOP_TIME=`date +%s000000000`
-    popd			# $client
+
+    sleep 120                   # Ramp down
+    popd                        # $client
 }
 
 function create_results_dir() {
@@ -273,12 +282,12 @@ function save_stats() {
     for srv in $(echo $NODES | tr ',' ' '); do
         mkdir -p $srv
         pushd $srv
-	scp -r $srv:/var/perfline/iostat* iostat || true
-	scp -r $srv:/var/perfline/blktrace* blktrace || true
-	scp -r $srv:/var/perfline/dstat* dstat || true
-	scp -r $srv:/var/perfline/hw* hw || true
-	scp -r $srv:/var/perfline/network* network || true
-	popd
+        scp -r $srv:/var/perfline/iostat* iostat || true
+        scp -r $srv:/var/perfline/blktrace* blktrace || true
+        scp -r $srv:/var/perfline/dstat* dstat || true
+        scp -r $srv:/var/perfline/hw* hw || true
+        scp -r $srv:/var/perfline/network* network || true
+        popd
     done
 }
 
@@ -297,12 +306,12 @@ function collect_artifacts() {
     mkdir -p $m0d
     pushd $m0d
     save_motr_artifacts
-    popd			# $m0d
+    popd                        # $m0d
 
     mkdir -p $s3srv
     pushd $s3srv
     save_s3srv_artifacts
-    popd			# $s3server
+    popd                        # $s3server
     
     if [[ -z $NO_ADDB_STOBS ]] && [[ -z $NO_ADDB_DUMPS ]] && [[ -z $NO_M0PLAY_DB ]]; then
         $SCRIPT_DIR/merge_m0playdb $m0d/dumps/m0play* $s3srv/*/m0play*
@@ -378,7 +387,7 @@ function stop_measuring_test_time()
     mkdir -p $stats
     pushd $stats
     # Save test time
-	echo "test_start_time: $TEST_TIME_START_SEC" >> common_stats.yaml
+        echo "test_start_time: $TEST_TIME_START_SEC" >> common_stats.yaml
     echo "test_stop_time: $TEST_TIME_STOP_SEC" >> common_stats.yaml
     popd
 }
@@ -393,12 +402,12 @@ function main() {
     start_measuring_test_time
 
     if [[ -n $MKFS ]]; then
-	# Stop cluster 
-	stop_cluster
-	cleanup_cluster
-	
-	# Restart cluster -- do mkfs, whatever...
-#	restart_cluster
+        # Stop cluster 
+        stop_cluster
+        cleanup_cluster
+        
+        # Restart cluster -- do mkfs, whatever...
+#       restart_cluster
     fi
 
     restart_cluster
@@ -430,10 +439,10 @@ function main() {
 
     hctl status > hctl-status.stop
     # if [[ -n $MKFS ]]; then
-    # 	# Stop cluster
-    # 	stop_cluster
+    #   # Stop cluster
+    #   stop_cluster
     # fi
-stop_cluster
+    stop_cluster
 
     # Collect ADDBs/m0traces/m0play.db
     collect_artifacts
@@ -442,8 +451,8 @@ stop_cluster
     echo "Generate plots, hists, etc"
 
     # if [[ -n $MKFS ]]; then
-    # 	cleanup_cluster
-    # 	restart_cluster
+    #   cleanup_cluster
+    #   restart_cluster
     # fi
 
     stop_measuring_test_time
@@ -495,9 +504,9 @@ while [[ $# -gt 0 ]]; do
         --no-motr-trace)
             NO_MOTR_TRACE="1"
             ;;
-	--mkfs)
-	    MKFS="1"
-	    ;;
+        --mkfs)
+            MKFS="1"
+            ;;
         *)
             echo -e "Invalid option: $1\nUse --help option"
             exit 1

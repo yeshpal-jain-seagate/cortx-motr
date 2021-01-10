@@ -63,14 +63,14 @@ parse_params()
         --no-m0play-db)
             NO_M0PLAY_DB="1"
             ;;
-	--start)
-	    START_TIME="$2"
-	    shift
-	    ;;
-	--stop)
-	    STOP_TIME="$2"
-	    shift
-	    ;;
+        --start)
+            START_TIME="$2"
+            shift
+            ;;
+        --stop)
+            STOP_TIME="$2"
+            shift
+            ;;
     esac
 
     shift
@@ -79,27 +79,25 @@ parse_params()
 
 function process_motr_addb()
 {
-
     for ios_fid in $IO_SERVICES; do
+        # The actual location of ADDB stobs may be either /var/motr or /var/log/seagate/motr/addb/
+        # TODO: Investigate it and choose only one variant
+        
+        # for ios_addb_stob in /var/log/seagate/motr/addb/m0d-$ios_fid/addb-stobs-*/o/100000000000000:2; do
+        for ios_addb_stob in /var/motr/m0d-$ios_fid/addb-stobs-*/o/100000000000000:2; do
+            if [[ -e $ios_addb_stob ]]; then
+                pushd $(dirname $ios_addb_stob)
+                pid=$(echo $ios_addb_stob | sed -E 's/.*addb-stobs-([0-9]+)[/].*/\1/')
 
-       local ios_dir="/var/log/seagate/motr/addb/m0d-$ios_fid"
-
-       if [[ ! -d "$ios_dir" ]]; then
-           continue
-       fi
-
-       local ios_addb_stobs="$ios_dir/addb-stobs-*/o/100000000000000:2" 
-
-       for addb_stob in $ios_addb_stobs; do
-
-           pushd $(dirname $addb_stob)
-           pid=$(echo $addb_stob | sed -E 's/.*addb-stobs-([0-9]+)[/].*/\1/')
-           m0addb2dump -f -- "$addb_stob" > ./dumps_${pid}.txt
-           scp dumps_* root@${ARTIF_HOST}:${ARTIF_DIR}
-           generate_m0playdb dumps_${pid}.txt $pid root@${ARTIF_HOST}:${ARTIF_DIR}
-           popd
-
-       done
+                # Example of using -s and -f flags of m0addb2dump utility
+                # m0addb2dump -f -s $START_TIME -e $STOP_TIME -- "$ios_addb_stob" > ./dumps_${pid}.txt || true
+                m0addb2dump -f -- "$ios_addb_stob" > ./dumps_${pid}.txt || true
+                scp dumps_* root@${ARTIF_HOST}:${ARTIF_DIR}
+                generate_m0playdb dumps_${pid}.txt $pid root@${ARTIF_HOST}:${ARTIF_DIR}
+                ls ./
+                popd
+            fi
+        done
     done
 }
 
@@ -108,14 +106,17 @@ function process_s3_addb()
     for addb_stob in /var/log/seagate/motr/s3server*/addb*/o/100000000000000:2; do
         pushd $(dirname $addb_stob)
         pid=$(echo $addb_stob | sed -E 's/.*addb_([0-9]+)[/].*/\1/')
+
+        # Example of using -s and -f flags of m0addb2dump utility
+        # m0addb2dump -f -s $START_TIME -e $STOP_TIME -p /opt/seagate/cortx/s3/addb-plugin/libs3addbplugin.so \
         m0addb2dump -f -p /opt/seagate/cortx/s3/addb-plugin/libs3addbplugin.so \
-            -- "$addb_stob" > ./dumpc_${pid}.txt
+            -- "$addb_stob" > ./dumpc_${pid}.txt || true
         scp dumpc_* root@${ARTIF_HOST}:${ARTIF_DIR}/$(hostname)
         generate_m0playdb dumpc_${pid}.txt $pid root@${ARTIF_HOST}:${ARTIF_DIR}/$(hostname)
 
         ls ./
         popd
-    done    
+    done
 }
 
 function generate_m0playdb()
@@ -128,7 +129,7 @@ function generate_m0playdb()
     local pid="$2"
     local remote_path="$3"
 
-    python3 $TOOLS_DIR/addb2new.py --procs 16 --dumps ./$addb_dump
+    python3 $TOOLS_DIR/addb2db.py --procs 16 --dumps ./$addb_dump
     mv m0play.db m0play_${pid}.db
     scp m0play_${pid}.db $remote_path
 }

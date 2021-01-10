@@ -1,4 +1,4 @@
-- name: Copy perfline scirpts to secondary node
+- name: Copy sources to secondary node
   hosts: secondary_node
   become: yes
   vars:
@@ -20,6 +20,37 @@
     file: path=/root/perfline/perfline/workload mode=a+x state=directory recurse=yes
   - name: Changing permission for execution for perfline.py
     file: dest=/root/perfline/perfline/perfline.py mode=a+x
+
+  - name: Copy chronometry dir
+    copy:
+      src: "{{ playbook_dir }}/../chronometry"
+      dest: "{{ perfline_dir }}"
+
+  - name: Install perfline python dependencies
+    pip:
+      name:
+        - huey
+        - plumbum
+        - cerberus
+        - pandas
+        - matplotlib
+        - Flask
+        - PyYAML
+        - Jinja2
+        - iostat-tool
+        - peewee
+	- tqdm
+      executable: pip3
+      extra_args: -i https://pypi.org/simple
+
+  - name: Install perfline system dependencies
+    yum:
+      name:
+        - dstat
+        - sysstat
+        - pdsh
+      state: present
+
 
 - name: Copy sources to master node
   hosts: master_node
@@ -64,10 +95,14 @@
         - Jinja2
         - iostat-tool
         - peewee
+	- tqdm
       executable: pip3
+      extra_args: -i https://pypi.org/simple
+
   - name: Install perfline system dependencies
     yum:
       name:
+        - dstat
         - sysstat
         - pdsh
       state: present
