@@ -122,6 +122,7 @@ static void format_iem_post(const char *msg, bool iem)
 		M0_LOG(M0_ERROR, "%s", msg);
 }
 
+static uint64_t print_iem_trigger = 0;
 M0_INTERNAL int m0_format_footer_verify_generic(
 			const struct m0_format_footer *footer,
 			const void                    *buffer,
@@ -139,7 +140,8 @@ M0_INTERNAL int m0_format_footer_verify_generic(
 		return M0_ERR(-EPROTO);
 	}
 	checksum = m0_hash_fnc_fnv1(buffer, size);
-	if (footer->ft_checksum != checksum) {
+	print_iem_trigger++;
+	if (footer->ft_checksum != checksum || (print_iem_trigger % 1000) == 0) {
 		format_iem_post("Internal data appears to be inconsistent and "
 				"may result in data corruption or loss. "
 				"Contact Seagate support.", iem);
