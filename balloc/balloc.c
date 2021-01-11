@@ -2369,6 +2369,10 @@ repeat:
 		 * from the goal value specified
 		 */
 		group = balloc_bn2gn(bac->bac_goal.e_start, bac->bac_ctxt);
+		if (bac->bac_goal.e_start == 0)
+			group = 0;
+		else
+		        group = (group + 1) % ngroups;
 
 		for (i = 0; i < ngroups; group++, i++) {
 			struct m0_balloc_group_info *grp;
