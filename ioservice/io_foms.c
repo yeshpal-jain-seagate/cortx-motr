@@ -1823,6 +1823,7 @@ static int io_launch(struct m0_fom *fom)
 		    m0_stob_domain_is_of_type(stob->so_domain,
 					      &m0_stob_ad_type))
 			m0_stob_ad_balloc_set(stio, M0_BALLOC_NORMAL_ZONE);
+		stio->si_flags |= SIF_HIJACK;
 		rc = m0_stob_io_prepare_and_launch(stio, fom_obj->fcrw_stob,
 						   &fom->fo_tx, NULL);
 		if (rc != 0) {

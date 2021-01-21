@@ -51,6 +51,9 @@ struct m0_stob_linux_domain {
 	char				*sld_path;
 	/** @see m0_stob_type_ops::sto_domain_cfg_init_parse() */
 	struct m0_stob_linux_domain_cfg	 sld_cfg;
+	int				 sld_null;
+	int				 sld_zero;
+	bool				 sld_hijack;
 };
 
 struct m0_stob_linux {

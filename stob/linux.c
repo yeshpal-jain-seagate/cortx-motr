@@ -252,9 +252,18 @@ static int stob_linux_domain_init(struct m0_stob_type *type,
 					   ldom->sld_cfg.sldc_use_directio);
 		ldom->sld_dom.sd_ops = &stob_linux_domain_ops;
 		ldom->sld_path	     = path;
+		M0_LOG(M0_ALWAYS, "path=%s", path);
 		type_id = m0_stob_type_id_get(type);
 		m0_stob_domain__dom_id_make(&dom_id, type_id, 0, dom_key);
 		m0_stob_domain__id_set(&ldom->sld_dom, &dom_id);
+		M0_LOG(M0_DEBUG, "hijack? %s", ldom->sld_path);
+		if (m0_streq(ldom->sld_path, "stobs")) {
+			ldom->sld_zero = open("/dev/zero", O_RDONLY, 0777);
+			ldom->sld_null = open("/dev/null", O_WRONLY, 0777);
+			M0_ASSERT(ldom->sld_zero > 0 && ldom->sld_null > 0);
+			M0_LOG(M0_DEBUG, "hijack linuxdom");
+			ldom->sld_hijack = true;
+		}
 	}
 	if (rc != 0) {
 		m0_free(path);
@@ -268,6 +277,10 @@ static void stob_linux_domain_fini(struct m0_stob_domain *dom)
 {
 	struct m0_stob_linux_domain *ldom = m0_stob_linux_domain_container(dom);
 
+	if (ldom->sld_hijack) {
+		close(ldom->sld_zero);
+		close(ldom->sld_null);
+	}
 	m0_stob_ioq_fini(&ldom->sld_ioq);
 	m0_free(ldom->sld_path);
 	m0_free(ldom);

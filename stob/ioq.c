@@ -272,6 +272,13 @@ static int stob_linux_io_launch(struct m0_stob_io *io)
 
 		iocb->u.v.vec = iov;
 		iocb->aio_fildes = lstob->sl_fd;
+		if (io->si_flags & SIF_HIJACK) {
+			M0_ASSERT(lstob->sl_dom->sld_hijack);
+			iocb->aio_fildes = io->si_opcode == SIO_READ
+				? lstob->sl_dom->sld_zero
+				: lstob->sl_dom->sld_null;
+		} else
+			iocb->aio_fildes = lstob->sl_fd;
 		iocb->u.v.nr = min32u(frags, IOV_MAX);
 		iocb->u.v.offset = off << m0_stob_ioq_bshift(ioq);
 		iocb->aio_lio_opcode = opcode;
