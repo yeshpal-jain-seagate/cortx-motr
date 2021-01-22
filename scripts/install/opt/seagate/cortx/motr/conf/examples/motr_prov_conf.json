@@ -2,10 +2,52 @@
   "cluster":{
     "server":[
       {
-        "hostname": "srvnode-1.localhost",
+        "hostname": "ssc-vm-2004.colo.seagate.com",
         "storage":{
           "metadata_devices":[
-            "/dev/sde1"
+            "/dev/sdm1"
+            ]
+        },
+        "network":{
+          "data":
+          {
+              "interfaces":["eth0","eth1"]
+          }
+        }
+      },
+      {
+        "hostname": "ssc-vm-2005.colo.seagate.com",
+        "storage":{
+          "metadata_devices":[
+            "/dev/sdm1"
+            ]
+        },
+        "network":{
+          "data":
+          {
+              "interfaces":["eth0","eth1"]
+          }
+        }
+      },
+      {
+        "hostname": "ssc-vm-2006.colo.seagate.com",
+        "storage":{
+          "metadata_devices":[
+            "/dev/sdm1"
+            ]
+        },
+        "network":{
+          "data":
+          {
+              "interfaces":["eth0","eth1"]
+          }
+        }
+      },
+      {
+        "hostname": "ssc-vm-2036.colo.seagate.com",
+        "storage":{
+          "metadata_devices":[
+            "/dev/sdm1"
             ]
         },
         "network":{

@@ -213,6 +213,28 @@ def check_pkgs(src_pkgs, dest_pkgs):
     if missing_pkgs:
         raise MotrError(errno.ENOENT, f'Missing pkgs: {missing_pkgs}')
 
+def ping_other_nodes(self):
+    try: 
+        cmd = "hostname"
+        my_hostname, ret_code = execute_command(cmd, TIMEOUT_SECS)
+        my_hostname = my_hostname.rstrip("\n")
+        if(ret_code):
+            raise MotrError(ret_code, "Failed cmd={cmd} ret={ret_code}") 
+        servers_data = (Conf.get(self._index,
+                                 f'cluster>server'))
+        for server_item in servers_data:
+            if (my_hostname != server_item["hostname"]):
+                temp_hostname = server_item["hostname"]
+                ifaces = server_item["network"]["data"]["interfaces"]
+                for iface in ifaces:
+                    cmd = f"ping -c 3 -I {iface} {temp_hostname}"
+                    op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+                    if (ret_code != 0):
+                        sys.stderr.write(f"Error: ping failed on {temp_hostname}:{iface}\n")
+                    time.sleep(SLEEP_SECS)
+    except MotrError as e:
+        pass  
+
 def test_lnet(self):
     search_lnet_pkgs = ["kmod-lustre-client", "lustre-client"]
 
@@ -230,5 +252,8 @@ def test_lnet(self):
         cmd = "ping -c 3 {}".format(ip_addr)
         cmd_res = execute_command(cmd, TIMEOUT_SECS)
         sys.stdout.write("{}\n".format(cmd_res[0]))
+
+        ping_other_nodes(self)
+
     except MotrError as e:
         pass
