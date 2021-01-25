@@ -3,7 +3,9 @@ motr_libmotr_la_SOURCES += \
 			dtm0/fop.c \
                        	dtm0/fop.h \
                         dtm0/service.c \
-                        dtm0/service.h
+                        dtm0/service.h \
+			dtm0/helper.c \
+			dtm0/helper.h
 
 nodist_motr_libmotr_la_SOURCES += dtm0/fop_xc.c
 

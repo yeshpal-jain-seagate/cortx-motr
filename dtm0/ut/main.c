@@ -21,6 +21,7 @@
 
 
 #include "dtm0/fop.h"
+#include "dtm0/helper.h"
 #include "dtm0/service.h"
 #include "net/net.h"
 #include "rpc/rpclib.h"
@@ -117,34 +118,6 @@ static void dtm0_ut_client_fini(struct cl_ctx *cctx)
 	m0_net_domain_fini(&cctx->cl_ndom);
 }
 
-struct m0_reqh_service *client_service_start(struct m0_reqh *reqh)
-{
-       struct m0_reqh_service_type *svct;
-       struct m0_reqh_service      *reqh_svc;
-       int rc;
-
-       svct = m0_reqh_service_type_find("M0_CST_DTM0");
-       M0_UT_ASSERT(svct != NULL);
-
-       rc = m0_reqh_service_allocate(&reqh_svc, svct, NULL);
-       M0_UT_ASSERT(rc == 0);
-
-       m0_reqh_service_init(reqh_svc, reqh, &cli_srv_fid);
-
-       rc = m0_reqh_service_start(reqh_svc);
-       M0_UT_ASSERT(rc == 0);
-
-       return reqh_svc;
-}
-
-void client_service_stop(struct m0_reqh_service *svc)
-{
-       m0_reqh_service_prepare_to_stop(svc);
-       m0_reqh_idle_wait_for(svc->rs_reqh, svc);
-       m0_reqh_service_stop(svc);
-       m0_reqh_service_fini(svc);
-}
-
 static void dtm0_ut_service(void)
 {
 	int rc;
@@ -164,7 +137,7 @@ static void dtm0_ut_service(void)
 	M0_UT_ASSERT(rc == 0);
 
 	dtm0_ut_client_init(&cctx, cl_ep_addr, srv_ep_addr, dtm0_xprts[0]);
-	cli_srv = client_service_start(&cctx.cl_ctx.rcx_reqh);
+	cli_srv = m0_dtm__client_service_start(&cctx.cl_ctx.rcx_reqh, &cli_srv_fid);
 	M0_UT_ASSERT(cli_srv != NULL);
 	srv_srv = m0_reqh_service_lookup(srv_reqh, &srv_dtm0_fid);
 	rc = m0_dtm0_service_process_connect(srv_srv, &cli_srv_fid, cl_ep_addr);
@@ -174,7 +147,7 @@ static void dtm0_ut_service(void)
 
 	rc = m0_dtm0_service_process_disconnect(srv_srv, &cli_srv_fid);
 	M0_UT_ASSERT(rc == 0);
-	client_service_stop(cli_srv);
+	m0_dtm__client_service_stop(cli_srv);
 	dtm0_ut_client_fini(&cctx);
 	m0_rpc_server_stop(&sctx);
 }
