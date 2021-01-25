@@ -45,6 +45,10 @@ class MotrError(Exception):
         if self._rc == 0: return self._desc
         return "error(%d): %s" %(self._rc, self._desc)
 
+def write_sep_line():
+    for i in range(80):
+        sys.stdout.write("=")
+    sys.stdout.write("\n")
 
 def execute_command(cmd, timeout_secs):
 
@@ -53,9 +57,11 @@ def execute_command(cmd, timeout_secs):
                           shell=True)
     stdout, stderr = ps.communicate(timeout=timeout_secs);
     stdout = str(stdout, 'utf-8')
+    write_sep_line()
     sys.stdout.write(f"[CMD] {cmd}\n")
     sys.stdout.write(f"[OUT]\n{stdout}\n")
     sys.stdout.write(f"[RET] {ps.returncode}\n")
+    write_sep_line()
     return stdout, ps.returncode
 
 def start_services(services):
@@ -235,6 +241,147 @@ def ping_other_nodes(self):
     except MotrError as e:
         pass  
 
+def get_nids(nodes, myhostname):
+    nids = []
+    for node in nodes:
+        if node == myhostname:
+            cmd = f"lctl list_nids"
+        else:
+            cmd = f"ssh {node} lctl list_nids"
+        op, ret = execute_command(cmd, TIMEOUT_SECS)
+        nids.append(op.rstrip("\n"))
+    return nids
+
+def remove_lnet_selftest_module(nodes, myhostname):
+    for node in nodes:
+        if node == myhostname:
+            cmd = f"lsmod | grep lnet_selftest"
+        else:
+            cmd = f"ssh {node} lsmod | grep lnet_selftest"
+        op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+
+        # If module is present, remove it. Else, ignore.
+        if ret_code == 0:
+            if node == myhostname:
+                cmd = f"rmmod lnet_selftest"
+            else:
+                cmd = f"ssh {node} rmmod lnet_selftest"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+
+def install_lnet_selftest_module(nodes, myhostname):
+    for node in nodes:
+        if node == myhostname:
+           cmd = f"lsmod | grep lnet_selftest"
+        else:
+           cmd = f"ssh {node} lsmod | grep lnet_selftest"
+        op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+
+        #If module is not present, install it. Else, ignore.
+        if ret_code:
+            if node == myhostname:
+                cmd = "modprobe lnet_selftest"
+            else:
+                cmd = f"ssh {node} modprobe lnet_selftest"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if ret_code:
+                raise MotrError(ret_code, "Failed cmd={cmd} ret={ret_code}")
+
+'''
+    First remove lent_selftest kernel modules from all nodes.
+    Install lnet_selftest module in all nodes.
+    Create pairs of nodes.
+    For each pair, run rbw test
+    Remove lnet_selftest module
+'''
+def lnet_selftest(self):
+    try: 
+        servers_data = (Conf.get(self._index,
+                                 f'cluster>server'))
+        nodes = []
+
+        # Get all nodes from Conf
+        for server_item in servers_data:
+            nodes.append(server_item["hostname"])
+
+        # Get my hostname
+        cmd = "hostname"
+        my_hostname, ret_code = execute_command(cmd, TIMEOUT_SECS)
+        my_hostname = my_hostname.rstrip("\n")
+        if(ret_code):
+            raise MotrError(ret_code, "Failed cmd={cmd} ret={ret_code}") 
+
+        # Get lnet ids of all nodes
+        nids = get_nids(nodes, my_hostname)
+        install_lnet_selftest_module(nodes, my_hostname)
+
+        # Create nid pairs
+        total_nids = len(nids)
+        nid_pairs = []
+        for i in range(total_nids):
+           for j in range(i+1, total_nids):
+                nid_pairs.append([nids[i], nids[j]])
+
+        # For each client-server pair, perform selftest 
+        for nid_pair in nid_pairs:
+            pid = os.getpid()
+            os.environ['LST_SESSION'] = f"{pid}"
+            cmd = "lst new_session twonoderead"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                continue
+
+            cmd = f"lst add_group client {nid_pair[0]}"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                execute_command("lst end_session", TIMEOUT_SECS)
+                continue
+
+            cmd = f"lst add_group server {nid_pair[1]}"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                execute_command("lst end_session", TIMEOUT_SECS)
+                continue
+
+            cmd = f"lst add_batch bulk_read"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                execute_command("lst end_session", TIMEOUT_SECS)
+                continue
+
+            cmd = (f"lst add_test --batch bulk_read "
+                    "--from client --to server brw read check=full size=1M")
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                execute_command("lst end_session", TIMEOUT_SECS)
+                continue
+
+            sys.stdout.write(f"Running brw read between {nid_pair[0]} "
+                             f"and {nid_pair[1]} for 30s\n")
+            cmd = "lst run bulk_read"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                execute_command("lst end_session", TIMEOUT_SECS)
+                continue
+
+            cmd = "timeout -k 35 30 lst stat client server"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+
+            cmd = "lst stop bulk_read"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                execute_command("lst end_session", TIMEOUT_SECS)
+                continue
+
+            cmd = "lst end_session"
+            op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+            if(ret_code):
+                remove_lnet_selftest_module(nodes, my_hostname)
+                raise MotrError(ret_code, "Failed cmd={cmd} ret={ret_code}")
+            time.sleep(SLEEP_SECS)
+        remove_lnet_selftest_module(nodes, my_hostname)
+    except MotrError as e:
+        pass
+
 def test_lnet(self):
     search_lnet_pkgs = ["kmod-lustre-client", "lustre-client"]
 
@@ -252,8 +399,8 @@ def test_lnet(self):
         cmd = "ping -c 3 {}".format(ip_addr)
         cmd_res = execute_command(cmd, TIMEOUT_SECS)
         sys.stdout.write("{}\n".format(cmd_res[0]))
-
         ping_other_nodes(self)
-
+        time.sleep(SLEEP_SECS)
+        lnet_selftest(self)
     except MotrError as e:
         pass
