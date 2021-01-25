@@ -32,4 +32,15 @@ extern struct m0_reqh_service_type dtm0_service_type;
 int m0_dtm0_stype_init(void);
 void m0_dtm0_stype_fini(void);
 
+
+M0_INTERNAL int m0_dtm0_service_process_connect(struct m0_reqh_service *s,
+						struct m0_fid *remote_srv,
+						const char    *remote_ep);
+M0_INTERNAL int m0_dtm0_service_process_disconnect(struct m0_reqh_service *s,
+						   struct m0_fid *remote_srv);
+M0_INTERNAL struct m0_rpc_session *
+m0_dtm0_service_process_session_get(struct m0_reqh_service *s,
+				    struct m0_fid *remote_srv);
+
+
 #endif /* __MOTR_DTM0_SERVICE_H__ */

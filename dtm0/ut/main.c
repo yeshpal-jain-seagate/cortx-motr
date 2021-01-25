@@ -21,10 +21,12 @@
 
 
 #include "dtm0/fop.h"
+#include "dtm0/service.h"
 #include "net/net.h"
 #include "rpc/rpclib.h"
 #include "ut/ut.h"
 
+#define M0_FID(c_, k_)  { .f_container = c_, .f_key = k_ }
 #define SERVER_ENDPOINT_ADDR    "0@lo:12345:34:1"
 #define SERVER_ENDPOINT         "lnet:" SERVER_ENDPOINT_ADDR
 #define DTM0_UT_CONF_PROCESS    "<0x7200000000000001:5>"
@@ -32,6 +34,8 @@
 
 enum { MAX_RPCS_IN_FLIGHT = 10 };
 
+static struct m0_fid cli_srv_fid = M0_FID(0x7300000000000001, 0x1a);
+static struct m0_fid srv_dtm0_fid = M0_FID(0x7300000000000001, 0x1c);
 static const char *cl_ep_addr =  "0@lo:12345:34:2";
 static const char *srv_ep_addr =  SERVER_ENDPOINT_ADDR;
 static char *dtm0_ut_argv[] = { "m0d", "-T", "linux",
@@ -72,7 +76,7 @@ static void dtm0_ut_send_fops(struct m0_rpc_session *cl_rpc_session)
 	req->csr_value = 555;
 	rc = m0_rpc_post_sync(fop, cl_rpc_session,
 			      &dtm0_req_fop_rpc_item_ops,
-			      0 /* deadline */);
+			      M0_TIME_NEVER);
 	M0_UT_ASSERT(rc == 0);
 	rep = reply(fop->f_item.ri_reply);
 	M0_UT_ASSERT(rep->csr_rc == 555);
@@ -113,6 +117,34 @@ static void dtm0_ut_client_fini(struct cl_ctx *cctx)
 	m0_net_domain_fini(&cctx->cl_ndom);
 }
 
+struct m0_reqh_service *client_service_start(struct m0_reqh *reqh)
+{
+       struct m0_reqh_service_type *svct;
+       struct m0_reqh_service      *reqh_svc;
+       int rc;
+
+       svct = m0_reqh_service_type_find("M0_CST_DTM0");
+       M0_UT_ASSERT(svct != NULL);
+
+       rc = m0_reqh_service_allocate(&reqh_svc, svct, NULL);
+       M0_UT_ASSERT(rc == 0);
+
+       m0_reqh_service_init(reqh_svc, reqh, &cli_srv_fid);
+
+       rc = m0_reqh_service_start(reqh_svc);
+       M0_UT_ASSERT(rc == 0);
+
+       return reqh_svc;
+}
+
+void client_service_stop(struct m0_reqh_service *svc)
+{
+       m0_reqh_service_prepare_to_stop(svc);
+       m0_reqh_idle_wait_for(svc->rs_reqh, svc);
+       m0_reqh_service_stop(svc);
+       m0_reqh_service_fini(svc);
+}
+
 static void dtm0_ut_service(void)
 {
 	int rc;
@@ -124,12 +156,25 @@ static void dtm0_ut_service(void)
 		.rsx_argc          = ARRAY_SIZE(dtm0_ut_argv),
 		.rsx_log_file_name = DTM0_UT_LOG,
 	};
+	struct m0_reqh_service  *cli_srv;
+	struct m0_reqh_service  *srv_srv;
+	struct m0_reqh          *srv_reqh = &sctx.rsx_motr_ctx.cc_reqh_ctx.rc_reqh;
 
 	rc = m0_rpc_server_start(&sctx);
 	M0_UT_ASSERT(rc == 0);
 
 	dtm0_ut_client_init(&cctx, cl_ep_addr, srv_ep_addr, dtm0_xprts[0]);
+	cli_srv = client_service_start(&cctx.cl_ctx.rcx_reqh);
+	M0_UT_ASSERT(cli_srv != NULL);
+	srv_srv = m0_reqh_service_lookup(srv_reqh, &srv_dtm0_fid);
+	rc = m0_dtm0_service_process_connect(srv_srv, &cli_srv_fid, cl_ep_addr);
+	M0_UT_ASSERT(rc == 0);
+
 	dtm0_ut_send_fops(&cctx.cl_ctx.rcx_session);
+
+	rc = m0_dtm0_service_process_disconnect(srv_srv, &cli_srv_fid);
+	M0_UT_ASSERT(rc == 0);
+	client_service_stop(cli_srv);
 	dtm0_ut_client_fini(&cctx);
 	m0_rpc_server_stop(&sctx);
 }
