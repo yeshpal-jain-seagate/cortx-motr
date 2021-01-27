@@ -382,6 +382,33 @@ def lnet_selftest(self):
     except MotrError as e:
         pass
 
+def lnet_ping(self):
+    try: 
+        servers_data = (Conf.get(self._index,
+                                 f'cluster>server'))
+        nodes = []
+
+        # Get all nodes from Conf
+        for server_item in servers_data:
+            nodes.append(server_item["hostname"])
+
+        # Get my hostname
+        cmd = "hostname"
+        my_hostname, ret_code = execute_command(cmd, TIMEOUT_SECS)
+        my_hostname = my_hostname.rstrip("\n")
+        if(ret_code):
+            raise MotrError(ret_code, "Failed cmd={cmd} ret={ret_code}") 
+
+        # Get lnet ids of all nodes and ping them
+        nids = get_nids(nodes, my_hostname)
+        for nid in nids:
+           cmd = f"lctl ping {nid}"
+           op, ret_code = execute_command(cmd, TIMEOUT_SECS)
+           if ret_code:
+                sys.stdout.write(f"ERROR: Failed cmd={cmd} ret={ret_code}\n")
+    except MotrError as e:
+        pass
+
 def test_lnet(self):
     search_lnet_pkgs = ["kmod-lustre-client", "lustre-client"]
 
@@ -401,6 +428,7 @@ def test_lnet(self):
         sys.stdout.write("{}\n".format(cmd_res[0]))
         ping_other_nodes(self)
         time.sleep(SLEEP_SECS)
-        lnet_selftest(self)
+        lnet_ping(self)
+        #lnet_selftest(self)
     except MotrError as e:
         pass
