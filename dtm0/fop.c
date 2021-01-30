@@ -185,8 +185,9 @@ static void dtm0_pong_back(struct m0_rpc_session *session)
 	item->ri_ops      = &dtm0_req_fop_rpc_item_ops;
 	item->ri_session  = session;
 	item->ri_prio     = M0_RPC_ITEM_PRIO_MID;
-	item->ri_deadline = M0_TIME_NEVER;
+	item->ri_deadline = M0_TIME_IMMEDIATELY;
 
+	//m0_nanosleep(m0_time(5, 0), NULL);
 	rc = m0_rpc_post(item);
 	M0_ASSERT(rc == 0);
 	m0_fop_put_lock(fop); // XXX: shall we lock here???
