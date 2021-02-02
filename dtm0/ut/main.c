@@ -150,15 +150,17 @@ static void dtm0_ut_service(void)
 
 	dtm0_ut_send_fops(&cctx.cl_ctx.rcx_session);
 
-	/* rc = m0_dtm0_service_process_disconnect(srv_srv, &cli_srv_fid); */
-	/* M0_UT_ASSERT(rc == 0); */
-	(void)srv_srv;
-	m0_rpc_server_stop(&sctx);
-	/* rc = m0_dtm0_service_process_disconnect(srv_srv, &cli_srv_fid); */
-	/* M0_UT_ASSERT(rc == 0); */
+	rc = m0_dtm0_service_process_disconnect(srv_srv, &cli_srv_fid);
+	M0_UT_ASSERT(rc == 0);
 
 	m0_dtm__client_service_stop(cli_srv);
 	dtm0_ut_client_fini(&cctx);
+
+	/* rc = m0_dtm0_service_process_disconnect(srv_srv, &cli_srv_fid); */
+	/* M0_UT_ASSERT(rc == 0); */
+	/* (void) srv_srv; */
+
+	m0_rpc_server_stop(&sctx);
 }
 
 struct m0_ut_suite dtm0_ut = {

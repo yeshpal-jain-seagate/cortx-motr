@@ -38,8 +38,10 @@
 
 static int dtm0_service__ha_subscribe(struct m0_reqh_service *service);
 static int dtm0_service__ha_unsubscribe(struct m0_reqh_service *service);
+/* static int dtm0_service__ha_unsubscribe_pre(struct m0_reqh_service *reqh_service); */
 static int dtm0_service_start(struct m0_reqh_service *service);
 static void dtm0_service_stop(struct m0_reqh_service *service);
+static void dtm0_service_prepare_to_stop(struct m0_reqh_service *service);
 static int dtm0_service_allocate(struct m0_reqh_service **service,
 				 const struct m0_reqh_service_type *stype);
 static void dtm0_service_fini(struct m0_reqh_service *service);
@@ -53,6 +55,7 @@ static const struct m0_reqh_service_ops dtm0_service_ops = {
 	.rso_start = dtm0_service_start,
 	.rso_stop  = dtm0_service_stop,
 	.rso_fini  = dtm0_service_fini,
+	.rso_prepare_to_stop = dtm0_service_prepare_to_stop,
 };
 
 struct m0_reqh_service_type dtm0_service_type = {
@@ -195,8 +198,12 @@ M0_INTERNAL int m0_dtm0_service_process_disconnect(struct m0_reqh_service *s,
 		return M0_RC(-ENOENT);
 
 	rc = m0_rpc_link_disconnect_sync(&process->dop_rlink,
-					 M0_TIME_NEVER);
-	M0_ASSERT(rc == 0);
+					 m0_time_from_now(5, 0));
+
+	M0_ASSERT(rc == 0 || rc == -ETIMEDOUT);
+	if (rc == -ETIMEDOUT)
+		M0_LOG(M0_WARN, "timeout");
+
 	m0_rpc_link_fini(&process->dop_rlink);
 
 	return M0_RC(0);
@@ -428,7 +435,7 @@ static int dtm0_service__ha_unsubscribe(struct m0_reqh_service *reqh_service)
 {
        struct dtm0_process *process;
        struct m0_dtm0_service *service;
-       /* int rc; */
+       int rc;
 
        M0_PRE(reqh_service != NULL);
        service = container_of(reqh_service, struct m0_dtm0_service, dos_generic);
@@ -437,9 +444,9 @@ static int dtm0_service__ha_unsubscribe(struct m0_reqh_service *reqh_service)
 
        while ((process = dopr_tlist_pop(&service->dos_processes)) != NULL) {
 	       /* if (process->dop_rserv_fid.f_key == 0x1a) { */
-	       /* 	       rc = m0_dtm0_service_process_disconnect(reqh_service, */
-	       /* 						       &process->dop_rserv_fid); */
-	       /* 	       M0_ASSERT(rc == 0 || rc == -ENOENT); */
+	       	       rc = m0_dtm0_service_process_disconnect(reqh_service,
+	       						       &process->dop_rserv_fid);
+	       	       M0_ASSERT(rc == 0 || rc == -ENOENT);
 	       /* } */
 	       dtm0_process__ha_state_unsubscribe(process);
                dopr_tlink_fini(process);
@@ -449,6 +456,35 @@ static int dtm0_service__ha_unsubscribe(struct m0_reqh_service *reqh_service)
        M0_LEAVE();
 
        return M0_RC(0);
+}
+
+/* static int dtm0_service__ha_unsubscribe_pre(struct m0_reqh_service *reqh_service) */
+/* { */
+/*        struct dtm0_process *process; */
+/*        struct m0_dtm0_service *service; */
+/*        int rc; */
+
+/*        M0_PRE(reqh_service != NULL); */
+/*        service = container_of(reqh_service, struct m0_dtm0_service, dos_generic); */
+
+/*        M0_ENTRY(); */
+
+/* 	m0_tl_for(dopr, &service->dos_processes, process) { */
+/* 	       if (process->dop_rserv_fid.f_key == 0x1a) { */
+/* 	       	       rc = m0_dtm0_service_process_disconnect(reqh_service, */
+/* 							       &process->dop_rserv_fid); */
+/* 	       	       M0_ASSERT(rc == 0 || rc == -ENOENT); */
+/* 	       } */
+/* 	} m0_tl_endfor; */
+
+/*        M0_LEAVE(); */
+
+/*        return M0_RC(0); */
+/* } */
+
+static void dtm0_service_prepare_to_stop(struct m0_reqh_service *service)
+{
+	/* dtm0_service__ha_unsubscribe_pre(service); */
 }
 
 /*

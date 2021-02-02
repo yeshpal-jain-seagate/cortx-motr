@@ -807,6 +807,9 @@ static void st_one_dtm0_op_idx_create(void)
 	m0_op_fini(op);
 	m0_free0(&op);
 
+
+	/* PUT */
+
 	m0_idx_fini(&idx);
 }
 
