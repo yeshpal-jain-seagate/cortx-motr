@@ -168,7 +168,7 @@ static size_t dtm0_fom_locality(const struct m0_fom *fom)
 }
 
 #define M0_FID(c_, k_)  { .f_container = c_, .f_key = k_ }
-static void dtm0_pong_back(struct m0_rpc_session *session)
+M0_UNUSED static void dtm0_pong_back(struct m0_rpc_session *session)
 {
         struct m0_fop         *fop;
 	struct dtm0_req_fop   *req;
@@ -179,7 +179,7 @@ static void dtm0_pong_back(struct m0_rpc_session *session)
 
 	fop = m0_fop_alloc_at(session, &dtm0_req_fop_fopt);
 	req = m0_fop_data(fop);
-	req->csr_value = 555;
+	req->drf_value = 555;
 
 	item              = &fop->f_item;
 	item->ri_ops      = &dtm0_req_fop_rpc_item_ops;
@@ -192,6 +192,49 @@ static void dtm0_pong_back(struct m0_rpc_session *session)
 	m0_fop_put_lock(fop); // XXX: shall we lock here???
 }
 
+//static void reserve_credits(const struct m0_fom       *fom,
+//			    struct m0_be_dtm0_log     *log,
+//			    struct m0_be_tx_credit    *accum)
+//{
+//	struct m0_dtm0_log_record *log_rec;
+//	struct m0_be_seg          *seg = fom->fo_tx.be_tx.seg;
+//
+//	m0_be_dtm0_log_find(log, &req->drf_txr.dtd_id, &log_rec);
+//	if (log_rec != NULL) { /* log record exists */
+//		m0_be_dtm0_log_credit(M0_DTML_PERSISTENT, seg, accum);
+//	} else {
+//		m0_be_dtm0_log_credit(M0_DTML_PERSISTENT, seg, accum);
+//		m0_be_dtm0_log_credit(M0_DTML_CREATE    , seg, accum);
+//	}
+//
+//	// 0. tx_reserve_credits(credit)
+//	// tx.reg_area.reserve(credit)
+//	//
+//
+//	// 1. memcpy()
+//	// [    uuu1                        ]
+//	// [         uuu2                   ]
+//	// [              uuu3              ]
+//
+//	// 2. tx_capture()
+//	// tx.reg_area.copy(uuu1);
+//	// tx.reg_area.copy(uuu2);
+//	// tx.reg_area.copy(uuu3);
+//
+//
+//	// 3. log structures
+//	// [       xxx---->yyU----->UUU
+//	// [                          |
+//	// [                          |
+//	// [                          V
+//	// [                        UUUUUUU
+//	// [                           |
+//	// [                          UUU  UUU
+//
+//
+//}
+
+
 static int dtm0_fom_tick(struct m0_fom *fom)
 {
 	int                  rc;
@@ -199,19 +242,26 @@ static int dtm0_fom_tick(struct m0_fom *fom)
 	struct dtm0_rep_fop *rep;
 
 	if (m0_fom_phase(fom) < M0_FOPH_NR) {
+		//if (m0_fom_phase(fom) == TX_OPEN &&
+		//    m0_dtm0_service_is_persistent(fom->service)) {
+		//	reserve_credits(req,
+		//                      reqh_service_to_dtm0(fom->fo_service)->log,
+		//                      &fom->fo_tx.be_tx_credit);
+		//}
+
 		rc = m0_fom_tick_generic(fom);
 	} else {
+
+		//m0_be_dtm0_log_update(reqh_service_to_dtm0(fom->fo_service)->log,
+		//		      &fom->fo_tx.be_tx,
+		//		      req->txr);
+
+
 		req = m0_fop_data(fom->fo_fop);
 		rep = m0_fop_data(fom->fo_rep_fop);
-		rep->csr_rc = req->csr_value;
+		rep->drf_rc = req->drf_value;
 		m0_fom_phase_set(fom, M0_FOPH_SUCCESS);
 		rc = M0_FSO_AGAIN;
-		if (m0_dtm0_is_a_persistent_dtm(fom->fo_service)) {
-			struct m0_fid fid = M0_FID(0x7300000000000001, 0x1a);
-			dtm0_pong_back(
-				m0_dtm0_service_process_session_get(
-					fom->fo_service, &fid));
-		}
 	}
 
 	return rc;

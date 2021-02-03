@@ -27,6 +27,8 @@
 
 #include "lib/types.h"
 #include "xcode/xcode_attr.h"
+#include "dtm0/tx_desc.h"
+#include "dtm0/tx_desc_xc.h"
 
 extern struct m0_fop_type dtm0_req_fop_fopt;
 extern struct m0_fop_type dtm0_rep_fop_fopt;
@@ -38,11 +40,12 @@ int m0_dtm0_fop_init(void);
 void m0_dtm0_fop_fini(void);
 
 struct dtm0_req_fop {
-	uint64_t csr_value;
+	uint64_t               drf_value;
+	struct m0_dtm0_tx_desc drf_txr;
 } M0_XCA_RECORD M0_XCA_DOMAIN(rpc);
 
 struct dtm0_rep_fop {
-	int32_t csr_rc;
+	int32_t drf_rc;
 } M0_XCA_RECORD M0_XCA_DOMAIN(rpc);
 
 /* __MOTR_DTM0_FOP_FOMS_H__ */

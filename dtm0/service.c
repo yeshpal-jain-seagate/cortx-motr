@@ -285,6 +285,13 @@ static enum m0_dtm0_service_origin origin(struct m0_reqh_service *service)
 			    dos_generic)->dos_origin;
 }
 
+M0_UNUSED static struct m0_dtm0_service *to_dtm(struct m0_reqh_service *service)
+{
+	return container_of(service,
+			    struct m0_dtm0_service,
+			    dos_generic);
+}
+
 M0_INTERNAL bool m0_dtm0_is_a_volatile_dtm(struct m0_reqh_service *service)
 {
 	return m0_streq(service->rs_type->rst_name, "M0_CST_DTM0") &&

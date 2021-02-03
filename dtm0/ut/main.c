@@ -62,6 +62,49 @@ static struct dtm0_rep_fop *reply(struct m0_rpc_item *reply)
 	return m0_fop_data(m0_rpc_item_to_fop(reply));
 }
 
+static int pag_alloc(struct m0_dtm0_tx_pa_group *pa_group, size_t nr)
+{
+	//pa_group->dtpg_pa = m0_alloc(nr);
+	M0_ALLOC_ARR(pa_group->dtpg_pa, nr);
+	if (pa_group->dtpg_pa == NULL)
+		return -ENOMEM;
+
+	pa_group->dtpg_nr = nr;
+	return 0;
+}
+
+static void dtm0_ut_fop_fill(struct dtm0_req_fop *req)
+{
+	static struct m0_dtm0_clk_src dcs;
+	int rc;
+
+	/*
+	 * updated dummy record
+	 */
+	req->drf_value = 555;
+
+	/*
+	 * updated clock source
+	 */
+	m0_dtm0_clk_src_init(&dcs, M0_DTM0_CS_PHYS);
+	rc = m0_dtm0_clk_src_now(&dcs, &req->drf_txr.dtd_id.dti_ts);
+	M0_UT_ASSERT(rc == 0);
+	req->drf_txr.dtd_id.dti_fid = cli_srv_fid;
+	m0_dtm0_clk_src_fini(&dcs);
+
+	/*
+	 * allocate participants.
+	 */
+	rc = pag_alloc(&req->drf_txr.dtd_pg, 2);
+	M0_UT_ASSERT(rc == 0);
+
+	req->drf_txr.dtd_pg.dtpg_pa[0].pa_fid = cli_srv_fid;
+	req->drf_txr.dtd_pg.dtpg_pa[0].pa_state = M0_DTPS_PERSISTENT;
+
+	req->drf_txr.dtd_pg.dtpg_pa[1].pa_fid = srv_dtm0_fid;
+	req->drf_txr.dtd_pg.dtpg_pa[1].pa_state = M0_DTPS_INPROGRESS;
+}
+
 static void dtm0_ut_send_fops(struct m0_rpc_session *cl_rpc_session)
 {
 	int                    rc;
@@ -74,13 +117,13 @@ static void dtm0_ut_send_fops(struct m0_rpc_session *cl_rpc_session)
 	fop = m0_fop_alloc_at(cl_rpc_session,
 			      &dtm0_req_fop_fopt);
 	req = m0_fop_data(fop);
-	req->csr_value = 555;
+	dtm0_ut_fop_fill(req);
 	rc = m0_rpc_post_sync(fop, cl_rpc_session,
 			      &dtm0_req_fop_rpc_item_ops,
 			      M0_TIME_IMMEDIATELY);
 	M0_UT_ASSERT(rc == 0);
 	rep = reply(fop->f_item.ri_reply);
-	M0_UT_ASSERT(rep->csr_rc == 555);
+	M0_UT_ASSERT(rep->drf_rc == 555);
 	m0_fop_put_lock(fop);
 }
 
