@@ -479,6 +479,7 @@ static void be_btree_split_child(struct m0_be_btree *btree,
 		if(btree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 		{
 			new_child->bt_kv_arr[i].btree_key = &new_child->bt_kv_arr[i].inlkey;
+			new_child->bt_kv_arr[i].btree_val = &new_child->bt_kv_arr[i].inlval;
 		}
 		i++;
 	}
@@ -508,6 +509,7 @@ static void be_btree_split_child(struct m0_be_btree *btree,
 		if(btree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 		{
 			parent->bt_kv_arr[i - 1].btree_key = &parent->bt_kv_arr[i - 1].inlkey;
+			parent->bt_kv_arr[i - 1].btree_val = &parent->bt_kv_arr[i - 1].inlval;
 		}
 	}
 
@@ -517,6 +519,7 @@ static void be_btree_split_child(struct m0_be_btree *btree,
 	if(btree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 	{
 		parent->bt_kv_arr[index].btree_key = &parent->bt_kv_arr[index].inlkey;
+		parent->bt_kv_arr[index].btree_val = &parent->bt_kv_arr[index].inlval;
 	}
 	parent->bt_num_active_key++;
 
@@ -568,6 +571,7 @@ static void be_btree_insert_into_nonfull(struct m0_be_btree      *btree,
 		if(btree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 		{
 			node->bt_kv_arr[i+1].btree_key = &node->bt_kv_arr[i+1].inlkey;
+			node->bt_kv_arr[i+1].btree_val = &node->bt_kv_arr[i+1].inlval;
 		}
 		i--;
 	}
@@ -575,6 +579,7 @@ static void be_btree_insert_into_nonfull(struct m0_be_btree      *btree,
 	if(btree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 	{
 		node->bt_kv_arr[i+1].btree_key = &node->bt_kv_arr[i+1].inlkey;
+		node->bt_kv_arr[i+1].btree_val = &node->bt_kv_arr[i+1].inlval;
 	}
 	node->bt_num_active_key++;
 
@@ -683,6 +688,7 @@ static void be_btree_shift_key_vals(struct m0_be_bnode *dest,
 		if(ktype != M0_BBT_CAS_CTG)
 		{
 			dest->bt_kv_arr[i + key_dest_offset].btree_key = &dest->bt_kv_arr[i + key_dest_offset].inlkey;
+			dest->bt_kv_arr[i + key_dest_offset].btree_val = &dest->bt_kv_arr[i + key_dest_offset].inlval;
 		}
 		dest->bt_child_arr[i + child_dest_offset ] =
 				src->bt_child_arr[i + child_src_offset];
@@ -723,6 +729,7 @@ be_btree_merge_siblings(struct m0_be_tx    *tx,
 	if(tree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 	{
 		node1->bt_kv_arr[tval].btree_key = &node1->bt_kv_arr[tval].inlkey;
+		node1->bt_kv_arr[tval].btree_val = &node1->bt_kv_arr[tval].inlval;
 	}
 	M0_ASSERT(node1->bt_num_active_key + node2->bt_num_active_key <= KV_NR);
 
@@ -777,6 +784,7 @@ static void be_btree_move_parent_key_to_right_child(struct m0_be_bnode *parent,
 		if(ktype != M0_BBT_CAS_CTG)
 		{
 			rch->bt_kv_arr[i].btree_key = &rch->bt_kv_arr[i].inlkey;
+			rch->bt_kv_arr[i].btree_val = &rch->bt_kv_arr[i].inlval;
 		}
 		rch->bt_child_arr[i + 1] = rch->bt_child_arr[i];
 		--i;
@@ -786,6 +794,7 @@ static void be_btree_move_parent_key_to_right_child(struct m0_be_bnode *parent,
 	if(ktype != M0_BBT_CAS_CTG)
 	{
 		rch->bt_kv_arr[0].btree_key = &rch->bt_kv_arr[0].inlkey;
+		rch->bt_kv_arr[0].btree_val = &rch->bt_kv_arr[0].inlval;
 	}
 	rch->bt_child_arr[0] =
 			lch->bt_child_arr[lch->bt_num_active_key];
@@ -795,6 +804,7 @@ static void be_btree_move_parent_key_to_right_child(struct m0_be_bnode *parent,
 	if(ktype != M0_BBT_CAS_CTG)
 	{
 		parent->bt_kv_arr[idx].btree_key = &parent->bt_kv_arr[idx].inlkey;
+		parent->bt_kv_arr[idx].btree_val = &parent->bt_kv_arr[idx].inlval;
 	}
 	lch->bt_num_active_key--;
 	rch->bt_num_active_key++;
@@ -813,6 +823,7 @@ static void be_btree_move_parent_key_to_left_child(struct m0_be_bnode *parent,
 	if(ktype != M0_BBT_CAS_CTG)
 	{
 		lch->bt_kv_arr[lch->bt_num_active_key].btree_key = &lch->bt_kv_arr[lch->bt_num_active_key].inlkey;
+		lch->bt_kv_arr[lch->bt_num_active_key].btree_val = &lch->bt_kv_arr[lch->bt_num_active_key].inlval;
 	}
 
 	lch->bt_child_arr[lch->bt_num_active_key + 1] =
@@ -822,6 +833,7 @@ static void be_btree_move_parent_key_to_left_child(struct m0_be_bnode *parent,
 	if(ktype != M0_BBT_CAS_CTG)
 	{
 		parent->bt_kv_arr[idx].btree_key = &parent->bt_kv_arr[idx].inlkey;
+		parent->bt_kv_arr[idx].btree_val = &parent->bt_kv_arr[idx].inlval;
 	}
 	i = 0;
 	while (i < rch->bt_num_active_key - 1) {
@@ -829,6 +841,7 @@ static void be_btree_move_parent_key_to_left_child(struct m0_be_bnode *parent,
 		if(ktype != M0_BBT_CAS_CTG)
 		{
 			rch->bt_kv_arr[i].btree_key = &rch->bt_kv_arr[i].inlkey;
+			rch->bt_kv_arr[i].btree_val = &rch->bt_kv_arr[i].inlval;
 		}
 		rch->bt_child_arr[i] = rch->bt_child_arr[i + 1];
 		++i;
@@ -910,6 +923,7 @@ void be_btree_delete_key_from_node(struct m0_be_btree	 *tree,
 			if(tree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 			{
 				bnode->bt_kv_arr[idx].btree_key = &bnode->bt_kv_arr[idx].inlkey;
+				bnode->bt_kv_arr[idx].btree_val = &bnode->bt_kv_arr[idx].inlval;
 			}
 			++idx;
 		}
@@ -955,7 +969,9 @@ static void btree_node_child_delete(struct m0_be_btree    *btree,
 	if(btree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 	{
 		node->bt_kv_arr[index].btree_key = &node->bt_kv_arr[index].inlkey;
+		node->bt_kv_arr[index].btree_val = &node->bt_kv_arr[index].inlval;
 		child->bnp_node->bt_kv_arr[child->bnp_index].btree_key = &child->bnp_node->bt_kv_arr[child->bnp_index].inlkey;
+		child->bnp_node->bt_kv_arr[child->bnp_index].btree_val = &child->bnp_node->bt_kv_arr[child->bnp_index].inlval;
 	}
 	/*
 	 * Update checksum for parent, for child it will be updated
@@ -1440,7 +1456,7 @@ static void btree_save(struct m0_be_btree        *tree,
 {
 	m0_bcount_t        ksz;
 	m0_bcount_t        vsz;
-	struct be_btree_key_val   new_kv;
+	struct be_btree_key_val  *new_kv;
 	struct be_btree_key_val  *cur_kv;
 	bool               val_overflow = false;
 
@@ -1463,9 +1479,10 @@ static void btree_save(struct m0_be_btree        *tree,
 
 	btree_op_fill(op, tree, tx, optype == BTREE_SAVE_UPDATE ?
 		      M0_BBO_UPDATE : M0_BBO_INSERT, NULL);
-
+	
 	m0_be_op_active(op);
 	m0_rwlock_write_lock(btree_rwlock(tree));
+	new_kv = &tree->bb_root->bkv;
 	if (anchor != NULL) {
 		anchor->ba_tree = tree;
 		anchor->ba_write = true;
@@ -1516,28 +1533,29 @@ static void btree_save(struct m0_be_btree        *tree,
 		    (cur_kv == NULL || val_overflow)) {
 			/* Avoid CPU alignment overhead on values. */
 			ksz = m0_align(key->b_nob, sizeof(void*));
-			new_kv.btree_key =
+			new_kv->btree_key =
 				      mem_alloc(tree, tx, ksz + vsz, zonemask);
-			new_kv.btree_val = new_kv.btree_key + ksz;
-			memcpy(new_kv.btree_key, key->b_addr, key->b_nob);
-			memset(new_kv.btree_key + key->b_nob, 0,
+			new_kv->btree_val = new_kv->btree_key + ksz;
+			memcpy(new_kv->btree_key, key->b_addr, key->b_nob);
+			memset(new_kv->btree_key + key->b_nob, 0,
 							ksz - key->b_nob);
 			if (val != NULL) {
-				memcpy(new_kv.btree_val, val->b_addr, vsz);
+				memcpy(new_kv->btree_val, val->b_addr, vsz);
 				mem_update(tree, tx,
-						new_kv.btree_key, ksz + vsz);
+						new_kv->btree_key, ksz + vsz);
 			} else {
-				mem_update(tree, tx, new_kv.btree_key, ksz);
-				anchor->ba_value.b_addr = new_kv.btree_val;
+				mem_update(tree, tx, new_kv->btree_key, ksz);
+				anchor->ba_value.b_addr = new_kv->btree_val;
 			}
 
 			if(tree->bb_ops->ko_type != M0_BBT_CAS_CTG)
 			{
-				memcpy(new_kv.inlkey, key->b_addr, key->b_nob);
-				M0_LOG(M0_ERROR,"YB:Inline key %s actual key %s",(char *)new_kv.inlkey,(char *)new_kv.btree_key);
+				memcpy(new_kv->inlkey, key->b_addr, key->b_nob);
+				memcpy(new_kv->inlval, val->b_addr, val->b_nob);
+				M0_LOG(M0_ERROR,"YB:Inline key %s actual key %s",(char *)new_kv->inlkey,(char *)new_kv->btree_key);
 			}
 
-			be_btree_insert_newkey(tree, tx, &new_kv);
+			be_btree_insert_newkey(tree, tx, new_kv);
 		}
 	} else {
 fi_exist:
@@ -1545,7 +1563,7 @@ fi_exist:
 		M0_LOG(M0_NOTICE, "the key entry at %p already exist",
 			key->b_addr);
 	}
-
+	new_kv = NULL;
 	if (anchor == NULL)
 		m0_rwlock_write_unlock(btree_rwlock(tree));
 	m0_be_op_done(op);
