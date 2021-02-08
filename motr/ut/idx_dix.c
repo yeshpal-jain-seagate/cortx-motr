@@ -786,7 +786,7 @@ struct m0_client* st_get_instance()
 #include "dtm0/service.h"
 
 #define M0_FID(c_, k_)  { .f_container = c_, .f_key = k_ }
-static void st_one_dtm0_op_idx_create(void)
+void st_one_dtm0_op_idx_create(void)
 {
 	struct m0_container realm;
 	struct m0_idx       idx;
@@ -805,9 +805,60 @@ static void st_one_dtm0_op_idx_create(void)
 	rc = m0_op_wait(op, M0_BITS(M0_OS_STABLE), WAIT_TIMEOUT);
 	M0_UT_ASSERT(rc == 0);
 	m0_op_fini(op);
-	m0_free0(&op);
-
+	m0_op_free(op);
+	op = NULL;
 	m0_idx_fini(&idx);
+}
+
+static void st_put_one(void)
+{
+	struct m0_container realm;
+	struct m0_idx       idx;
+	struct m0_fid       ifid;
+	struct m0_op       *op = NULL;
+	int                 rc;
+	struct m0_bufvec    keys;
+	struct m0_bufvec    vals;
+	int                 rcs[1];
+	m0_bcount_t         len = 1;
+	char               *key;
+	char               *val;
+	int                 flags = 0;
+
+	key = m0_strdup("ItIsAKey");
+	val = m0_strdup("ItIsAValue");
+
+	keys = M0_BUFVEC_INIT_BUF((void **) &key, &len);
+	vals = M0_BUFVEC_INIT_BUF((void **) &val, &len);
+
+	general_ifid_fill(&ifid, true);
+	m0_container_init(&realm, NULL, &M0_UBER_REALM, ut_m0c);
+	m0_idx_init(&idx, &realm.co_realm, (struct m0_uint128 *) &ifid);
+
+	/* Create index. */
+	rc = m0_entity_create(NULL, &idx.in_entity, &op);
+	M0_UT_ASSERT(rc == 0);
+	m0_op_launch(&op, 1);
+	rc = m0_op_wait(op, M0_BITS(M0_OS_STABLE), WAIT_TIMEOUT);
+	M0_UT_ASSERT(rc == 0);
+	m0_op_fini(op);
+	m0_op_free(op);
+	op = NULL;
+
+	rc = m0_idx_op(&idx, M0_IC_PUT,
+		       &keys, &vals, rcs,
+		       flags, &op);
+	M0_UT_ASSERT(rc == 0);
+	m0_op_launch(&op, 1);
+	rc = m0_op_wait(op, M0_BITS(M0_OS_STABLE), WAIT_TIMEOUT);
+	M0_UT_ASSERT(rc == 0);
+	M0_UT_ASSERT(op->op_rc == 0);
+	m0_op_fini(op);
+	m0_op_free(op);
+	op = NULL;
+	m0_idx_fini(&idx);
+	m0_free(key);
+	m0_free(val);
 }
 
 static void st_one_dtm0_op(void)
@@ -827,7 +878,8 @@ static void st_one_dtm0_op(void)
 	M0_UT_ASSERT(rc == 0);
 
 	/* XXX: put logic here */
-	st_one_dtm0_op_idx_create();
+	// st_one_dtm0_op_idx_create();
+	st_put_one();
 
 	rc = m0_dtm0_service_process_disconnect(srv_srv, &cli_srv_fid);
 	M0_UT_ASSERT(rc == 0);

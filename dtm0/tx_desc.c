@@ -85,6 +85,7 @@ M0_INTERNAL int m0_dtm0_tx_desc_init(struct m0_dtm0_tx_desc *td,
 	M0_ALLOC_ARR(td->dtd_pg.dtpg_pa, nr_pa);
 	if (td->dtd_pg.dtpg_pa == NULL)
 		return M0_ERR(-ENOMEM);
+	td->dtd_pg.dtpg_nr = nr_pa;
 	M0_POST(m0_dtm0_tx_desc__invariant(td));
 	return 0;
 }

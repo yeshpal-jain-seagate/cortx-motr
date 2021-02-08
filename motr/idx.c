@@ -24,6 +24,8 @@
 #include "motr/addb.h"
 #include "motr/idx.h"
 #include "motr/sync.h"
+#include "dtm0/dtx.h" /* m0_dtm0_dtx_* API */
+#include "dtm0/service.h" /* m0_dtm0_service_find */
 
 #include "lib/errno.h"
 #include "lib/finject.h"
@@ -111,6 +113,7 @@ static int idx_op_init(struct m0_idx *idx, int opcode,
 	struct m0_op_idx    *oi;
 	struct m0_entity    *entity;
 	struct m0_locality  *locality;
+	struct m0_client     *m0c;
 
 	M0_ENTRY();
 
@@ -120,6 +123,7 @@ static int idx_op_init(struct m0_idx *idx, int opcode,
 	/* Initialise the operation's generic part. */
 	entity = &idx->in_entity;
 	op->op_code = opcode;
+	m0c = entity->en_realm->re_instance;
 	rc = m0_op_init(op, &m0_op_conf, entity);
 	if (rc != 0)
 		return M0_ERR(rc);
@@ -149,6 +153,25 @@ static int idx_op_init(struct m0_idx *idx, int opcode,
 
 	m0_op_idx_bob_init(oi);
 	m0_ast_rc_bob_init(&oi->oi_ar);
+
+	if (M0_IN(op->op_code, (M0_IC_PUT, M0_IC_DEL))) {
+		/* If DTM0 service start after m0c was initialized,
+		 * we still can get this value. Such a scenario may
+		 * happen in UTs.
+		 */
+		if (m0c->m0c_dtms == NULL) {
+			rc = m0_dtm0_service_find(&m0c->m0c_reqh,
+						  &m0c->m0c_dtms);
+		}
+		rc = rc ?: m0_dtx_dtm0_init(m0c->m0c_dtms, oi->oi_sm_grp,
+					    &oi->oi_dtx);
+#if !defined(DTM0)
+		/* In non-DTM0 mode we can freely ignore any errors */
+		rc = rc ?: M0_RC(0);
+#endif
+		if (rc != 0)
+			return rc;
+	}
 
 	return M0_RC(0);
 }
@@ -392,6 +415,12 @@ static void idx_op_cb_launch(struct m0_op_common *oc)
 	/* Move to a different state and call the control function. */
 	m0_sm_group_lock(&op->op_entity->en_sm_group);
 
+	rc = m0_dtx_dtm0_prepare(oi->oi_dtx);
+	if (rc != 0) {
+		m0_sm_group_unlock(&op->op_entity->en_sm_group);
+		goto out;
+	}
+
 	switch (op->op_code) {
 	case M0_EO_CREATE:
 		m0_sm_move(&op->op_entity->en_sm, 0,
@@ -434,6 +463,8 @@ static void idx_op_cb_launch(struct m0_op_common *oc)
 	 *  = 1: the driver successes in launching the query asynchronously.
 	*/
 	rc = query(oi);
+
+out:
 	oi->oi_ar.ar_rc = rc;
 	if (rc < 0) {
 		oi->oi_ar.ar_ast.sa_cb = &idx_op_ast_fail;
