@@ -54,3 +54,21 @@ Functional Specification
 
 Capabilities are computed and hashed by master for object, access permissions, and users. Capabilities can also be authenticated by master later. Capabilities can be renewed here.
 
+*********************
+Logical Specification
+*********************
+
+Capability is an array of bytes. This is opaque to any other components in the system. Capability is calculated from object identifier, access permission, user identifier and time-stamp, and then hashed by the master. Currently as to define a stub for the system, this will be left empty. More detailed capability design will be done later.
+
+**********
+Use Cases
+**********
+
+Scenarios
+===========
+
++----------------+------------------------------------------+
+|                |                                          |
++----------------+------------------------------------------+
+|                |                                          |
++----------------+------------------------------------------+
